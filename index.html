@@ -3,133 +3,179 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="color-scheme" content="dark light" />
   <title>SRT Community</title>
-
-  <!-- Tailwind (shadcn 느낌을 정적에서 구현) -->
-  <script src="https://cdn.tailwindcss.com"></script>
-
-  <!-- Lucide icons -->
-  <script src="https://unpkg.com/lucide@latest"></script>
-
-  <!-- Markdown (marked) + Sanitizer (DOMPurify) -->
+  <meta name="description" content="읽기는 누구나 · 쓰기는 로그인 필요" />
+  <link rel="icon" href="./favicon.ico" />
+  <link rel="stylesheet" href="./styles.css" />
+  <!-- Markdown -->
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
-
-  <!-- Motion One (Framer 팀이 만든 가벼운 애니메이션) -->
-  <script src="https://cdn.jsdelivr.net/npm/@motionone/dom/dist/motion-one.min.js"></script>
-
-  <link rel="stylesheet" href="./styles.css" />
-  <script src="./app.js" defer></script>
 </head>
+<body>
+  <div class="bg">
+    <div class="bg__blob bg__blob--a"></div>
+    <div class="bg__blob bg__blob--b"></div>
+    <div class="bg__grid"></div>
+  </div>
 
-<body class="min-h-screen text-slate-100">
-  <div id="bg" aria-hidden="true"></div>
-
-  <header class="sticky top-0 z-50 border-b border-white/10 bg-slate-950/40 backdrop-blur-xl">
-    <div class="mx-auto max-w-6xl px-4 py-3 flex items-center gap-3">
-      <div class="flex items-center gap-2">
-        <div class="h-9 w-9 rounded-xl bg-white/10 border border-white/10 grid place-items-center">
-          <i data-lucide="sparkles" class="w-5 h-5"></i>
-        </div>
-        <div>
-          <div class="text-sm font-semibold leading-tight">SRT Community</div>
-          <div class="text-xs text-slate-300/80 leading-tight">읽기는 누구나 · 쓰기는 로그인 필요</div>
+  <header class="topbar">
+    <div class="container topbar__inner">
+      <div class="brand">
+        <div class="brand__logo" aria-hidden="true">S</div>
+        <div class="brand__text">
+          <div class="brand__title">SRT Community</div>
+          <div class="brand__sub">읽기는 누구나 · 쓰기는 로그인 필요</div>
         </div>
       </div>
 
-      <div class="ml-auto flex items-center gap-2">
-        <div id="rtBadge" class="rt-badge">
-          <span class="dot" aria-hidden="true"></span>
-          <span id="rtText">실시간 연결 준비중</span>
+      <div class="topbar__right">
+        <div class="rt" title="실시간 상태">
+          <span class="rt__dot" id="rtDot" aria-hidden="true"></span>
+          <span class="rt__label" id="rtLabel">실시간: 연결 시도중</span>
+          <span class="rt__meta" id="rtMeta">—</span>
         </div>
 
-        <button id="btnNew" class="btn-primary">
-          <i data-lucide="plus" class="w-4 h-4"></i>
-          <span>새 글</span>
+        <button class="btn btn--ghost" id="themeBtn" type="button" aria-label="테마 전환">
+          <span class="icon">🌓</span>
+          <span class="hide-sm">테마</span>
         </button>
 
-        <button id="btnAuth" class="btn-ghost">
-          <i data-lucide="log-in" class="w-4 h-4"></i>
-          <span>로그인</span>
-        </button>
-
-        <div id="userChip" class="hidden items-center gap-2">
-          <div class="px-3 py-1.5 rounded-xl bg-white/10 border border-white/10 text-sm">
-            <span id="userNick" class="font-semibold"></span>
-            <span id="userRole" class="ml-2 text-xs text-slate-300/80"></span>
-          </div>
-          <button id="btnLogout" class="btn-ghost">
-            <i data-lucide="log-out" class="w-4 h-4"></i>
-            <span>로그아웃</span>
-          </button>
+        <div class="userbox" id="userBox">
+          <button class="btn btn--primary" id="loginBtn" type="button">로그인</button>
         </div>
       </div>
     </div>
   </header>
 
-  <main class="mx-auto max-w-6xl px-4 py-6">
-    <section class="grid gap-4">
-      <div class="card p-4">
-        <div class="flex flex-wrap items-center gap-2">
-          <div class="seg" role="tablist" aria-label="카테고리">
-            <button class="seg-btn active" data-cat="all">전체</button>
-            <button class="seg-btn" data-cat="free">자유</button>
-            <button class="seg-btn" data-cat="notice">공지</button>
-            <button class="seg-btn" data-cat="qna">Q&A</button>
-            <button class="seg-btn" data-cat="study">스터디</button>
+  <main class="container main">
+    <!-- Toolbar -->
+    <section class="toolbar card">
+      <div class="toolbar__row">
+        <div class="chips" role="tablist" aria-label="카테고리">
+          <button class="chip is-active" data-cat="all" type="button">전체</button>
+          <button class="chip" data-cat="free" type="button">자유</button>
+          <button class="chip" data-cat="notice" type="button">공지</button>
+          <button class="chip" data-cat="qna" type="button">Q&amp;A</button>
+          <button class="chip" data-cat="study" type="button">스터디</button>
+        </div>
+
+        <div class="toolbar__controls">
+          <div class="search">
+            <input id="qInput" class="input" placeholder="검색 (제목/내용)" autocomplete="off" />
+            <button class="btn btn--ghost" id="searchBtn" type="button">검색</button>
           </div>
 
-          <div class="ml-auto flex flex-wrap items-center gap-2">
-            <label class="input-wrap">
-              <i data-lucide="search" class="w-4 h-4 text-slate-300/80"></i>
-              <input id="q" class="input" placeholder="검색(제목/내용)" />
-            </label>
-
-            <select id="sort" class="select">
+          <div class="select">
+            <label class="select__label" for="sortSel">정렬</label>
+            <select id="sortSel" class="select__box">
               <option value="latest">최신</option>
               <option value="hot">핫(Hot)</option>
             </select>
-
-            <button id="btnSearch" class="btn-ghost">
-              <i data-lucide="arrow-right" class="w-4 h-4"></i>
-              <span>검색</span>
-            </button>
           </div>
         </div>
+      </div>
 
-        <div class="mt-3 text-xs text-slate-300/80">
-          TIP) 이미지/동영상은 외부 링크를 Markdown으로: <span class="font-mono">![](링크)</span>
+      <div class="toolbar__row toolbar__row--sub">
+        <div class="hint">
+          <span class="badge">TIP</span>
+          <span>이미지/동영상은 외부 링크를 Markdown으로 붙여넣기: <code>![](링크)</code></span>
+        </div>
+
+        <div class="toolbar__subright">
+          <button class="btn btn--ghost" id="refreshBtn" type="button">새로고침</button>
+          <button class="btn btn--primary" id="newPostBtn" type="button">+ 새 글</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Feed -->
+    <section id="feedView" class="view">
+      <div class="feedHead">
+        <div class="feedHead__left">
+          <h2 class="h2" id="feedTitle">게시판</h2>
+          <div class="muted" id="feedSub">—</div>
+        </div>
+        <div class="feedHead__right">
+          <span class="pill" id="pillCount">0</span>
         </div>
       </div>
 
-      <div id="view" class="grid gap-4"></div>
+      <div id="banner" class="banner is-hidden" role="status" aria-live="polite"></div>
 
-      <div class="flex items-center justify-center gap-2">
-        <button id="btnMore" class="btn-ghost hidden">
-          <i data-lucide="chevron-down" class="w-4 h-4"></i>
-          <span>더 보기</span>
-        </button>
+      <div id="list" class="list"></div>
+
+      <div class="listFooter">
+        <button class="btn btn--ghost" id="loadMoreBtn" type="button">더 보기</button>
+        <div class="muted" id="loadMoreMeta"></div>
       </div>
+    </section>
+
+    <!-- Post Detail -->
+    <section id="postView" class="view is-hidden">
+      <div class="postTop">
+        <button class="btn btn--ghost" id="backBtn" type="button">← 목록</button>
+        <div class="postTop__right">
+          <button class="btn btn--ghost" id="postLikeBtn" type="button">👍 좋아요</button>
+          <button class="btn btn--ghost" id="postReportBtn" type="button">🚩 신고</button>
+          <button class="btn btn--ghost is-hidden" id="postEditBtn" type="button">✏️ 수정</button>
+          <button class="btn btn--danger is-hidden" id="postDeleteBtn" type="button">🗑️ 삭제(관리자)</button>
+        </div>
+      </div>
+
+      <article class="card post">
+        <div class="post__meta">
+          <span class="tag" id="postCat"></span>
+          <span class="dot">•</span>
+          <span id="postAuthor" class="muted"></span>
+          <span class="dot">•</span>
+          <span id="postTime" class="muted"></span>
+          <span class="spacer"></span>
+          <span class="pill" id="postLikeCount">0</span>
+          <span class="pill" id="postCommentCount">0</span>
+        </div>
+        <h1 class="post__title" id="postTitle"></h1>
+        <div class="md" id="postBody"></div>
+      </article>
+
+      <section class="card comments">
+        <div class="comments__head">
+          <h3 class="h3">댓글</h3>
+          <div class="muted" id="commentMeta">—</div>
+        </div>
+
+        <div class="commentComposer">
+          <div class="row">
+            <label class="toggle">
+              <input id="commentAnon" type="checkbox" />
+              <span>익명</span>
+            </label>
+            <div class="spacer"></div>
+            <button class="btn btn--ghost" id="commentPreviewBtn" type="button">미리보기</button>
+          </div>
+          <textarea id="commentInput" class="textarea" rows="3" placeholder="Markdown 지원: **굵게**, # 제목, > 인용, ![](이미지링크)"></textarea>
+          <div class="row">
+            <div class="muted">Shift+Enter 줄바꿈 / Enter 전송</div>
+            <div class="spacer"></div>
+            <button class="btn btn--primary" id="commentSendBtn" type="button">댓글 등록</button>
+          </div>
+          <div id="commentPreview" class="md is-hidden"></div>
+        </div>
+
+        <div id="commentList" class="commentList"></div>
+      </section>
     </section>
   </main>
 
+  <!-- Floating action -->
+  <button class="fab" id="fabBtn" type="button" aria-label="새 글쓰기">✍️</button>
+
+  <!-- Modal root -->
+  <div id="modalRoot" class="modalRoot is-hidden" aria-hidden="true"></div>
+
   <!-- Toast -->
-  <div id="toastHost" class="toast-host" aria-live="polite" aria-atomic="true"></div>
+  <div id="toastRoot" class="toastRoot" aria-live="polite" aria-atomic="true"></div>
 
-  <!-- Modal -->
-  <div id="modalRoot" class="modal-root hidden" role="dialog" aria-modal="true" aria-hidden="true">
-    <div class="modal-backdrop" data-close="1"></div>
-    <div class="modal-panel card">
-      <div class="modal-header">
-        <div class="font-semibold" id="modalTitle">제목</div>
-        <button class="btn-ghost" data-close="1" aria-label="닫기">
-          <i data-lucide="x" class="w-4 h-4"></i>
-        </button>
-      </div>
-      <div id="modalBody" class="modal-body"></div>
-    </div>
-  </div>
-
-  <noscript>이 사이트는 JavaScript가 필요합니다.</noscript>
+  <script defer src="./app.js"></script>
 </body>
 </html>
