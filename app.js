@@ -1,55 +1,56 @@
 import React, { useEffect, useMemo, useRef, useState } from "https://esm.sh/react@18.3.1";
-import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
-import { motion, AnimatePresence } from "https://esm.sh/framer-motion@11.3.30";
-import ReactMarkdown from "https://esm.sh/react-markdown@9.0.1";
-import remarkGfm from "https://esm.sh/remark-gfm@4.0.0";
-import {
-  Heart, MessageCircle, Send, ShieldAlert, Trash2, Pencil, LogIn, LogOut, UserPlus, Hash, Flame, Clock, Search, X
-} from "https://esm.sh/lucide-react@0.451.0";
+import ReactDOM from "https://esm.sh/react-dom@18.3.1/client";
+import { AnimatePresence, motion } from "https://esm.sh/framer-motion@11.3.30";
+import { marked } from "https://esm.sh/marked@14.0.0";
+import DOMPurify from "https://esm.sh/dompurify@3.1.6";
 
-// ===================== CONFIG =====================
-const API_BASE = "https://srt-community-api.yekong0728.workers.dev"; // 너 Workers API
-const WS_BASE = API_BASE.replace("https://", "wss://").replace("http://", "ws://");
+/** ================== CONFIG ================== **/
+const API_BASE = "https://srt-community-api.yekong0728.workers.dev";
+const LS_TOKEN = "srt_token";
+const LS_USER  = "srt_user";
 
-// 페이지 사이즈 (서버 보호용 상한이 있어도, 커서로 계속 불러오면 "개수 제한 없음"처럼 동작)
-const PAGE_SIZE = 50;
+/** ================== MARKDOWN ================== **/
+marked.setOptions({
+  gfm: true,
+  breaks: true,
+});
+function renderMarkdown(md){
+  const html = marked.parse(md || "");
+  return DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
+}
 
-// ===================== tiny utilities =====================
-const cls = (...a) => a.filter(Boolean).join(" ");
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-function formatTime(ms) {
-  const d = new Date(ms);
+/** ================== TIME ================== **/
+function fmtTime(ts){
+  const d = new Date(ts);
   const now = Date.now();
-  const diff = now - ms;
-  if (diff < 60_000) return "방금";
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}분 전`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}시간 전`;
-  return `${d.getFullYear()}.${String(d.getMonth()+1).padStart(2,"0")}.${String(d.getDate()).padStart(2,"0")} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+  const diff = Math.floor((now - ts)/1000);
+  if (diff < 60) return `${diff}s`;
+  if (diff < 3600) return `${Math.floor(diff/60)}m`;
+  if (diff < 86400) return `${Math.floor(diff/3600)}h`;
+  return `${d.getFullYear()}.${String(d.getMonth()+1).padStart(2,'0')}.${String(d.getDate()).padStart(2,'0')}`;
 }
 
-function getToken() {
-  return localStorage.getItem("SRT_TOKEN") || "";
-}
-function setToken(t) {
-  if (!t) localStorage.removeItem("SRT_TOKEN");
-  else localStorage.setItem("SRT_TOKEN", t);
-}
-
-// ===================== API helpers =====================
-async function apiFetch(path, { method="GET", token="", jsonBody=null } = {}) {
-  const headers = {};
-  if (jsonBody) headers["content-type"] = "application/json";
+/** ================== API ================== **/
+async function apiFetch(path, { method="GET", token=null, body=null, qs=null } = {}){
+  const url = new URL(API_BASE + path);
+  if (qs){
+    Object.entries(qs).forEach(([k,v])=>{
+      if (v !== undefined && v !== null && String(v).length) url.searchParams.set(k, String(v));
+    });
+  }
+  const headers = { "content-type":"application/json" };
   if (token) headers["Authorization"] = `Bearer ${token}`;
-  const res = await fetch(`${API_BASE}${path}`, {
+
+  const res = await fetch(url.toString(), {
     method,
     headers,
-    body: jsonBody ? JSON.stringify(jsonBody) : undefined,
+    body: body ? JSON.stringify(body) : undefined
   });
-  const text = await res.text();
-  let data = null;
-  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-  if (!res.ok) {
+
+  const ct = res.headers.get("content-type") || "";
+  const data = ct.includes("application/json") ? await res.json().catch(()=>null) : await res.text().catch(()=>null);
+
+  if (!res.ok){
     const msg = (data && data.error) ? data.error : `HTTP ${res.status}`;
     const err = new Error(msg);
     err.status = res.status;
@@ -59,119 +60,107 @@ async function apiFetch(path, { method="GET", token="", jsonBody=null } = {}) {
   return data;
 }
 
-// ===================== UI primitives (shadcn-ish) =====================
-function Card({ className, children }) {
+/** ================== ICONS (inline) ================== **/
+function Icon({name, size=18}){
+  const common = { width:size, height:size, viewBox:"0 0 24 24", fill:"none", xmlns:"http://www.w3.org/2000/svg" };
+  const stroke = { stroke:"currentColor", strokeWidth:"2", strokeLinecap:"round", strokeLinejoin:"round" };
+
+  if (name==="spark") return (
+    <svg {...common}><path {...stroke} d="M12 2l1.5 6L20 12l-6.5 4L12 22l-1.5-6L4 12l6.5-4L12 2z"/></svg>
+  );
+  if (name==="user") return (
+    <svg {...common}><path {...stroke} d="M20 21a8 8 0 0 0-16 0"/><circle {...stroke} cx="12" cy="8" r="4"/></svg>
+  );
+  if (name==="logIn") return (
+    <svg {...common}><path {...stroke} d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path {...stroke} d="M10 17l5-5-5-5"/><path {...stroke} d="M15 12H3"/></svg>
+  );
+  if (name==="logOut") return (
+    <svg {...common}><path {...stroke} d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path {...stroke} d="M16 17l5-5-5-5"/><path {...stroke} d="M21 12H9"/></svg>
+  );
+  if (name==="plus") return (
+    <svg {...common}><path {...stroke} d="M12 5v14"/><path {...stroke} d="M5 12h14"/></svg>
+  );
+  if (name==="search") return (
+    <svg {...common}><circle {...stroke} cx="11" cy="11" r="7"/><path {...stroke} d="M21 21l-4.3-4.3"/></svg>
+  );
+  if (name==="bolt") return (
+    <svg {...common}><path {...stroke} d="M13 2L3 14h7l-1 8 10-12h-7l1-8z"/></svg>
+  );
+  if (name==="heart") return (
+    <svg {...common}><path {...stroke} d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z"/></svg>
+  );
+  if (name==="flag") return (
+    <svg {...common}><path {...stroke} d="M4 22V3"/><path {...stroke} d="M4 3h12l-2 5 2 5H4"/></svg>
+  );
+  if (name==="edit") return (
+    <svg {...common}><path {...stroke} d="M12 20h9"/><path {...stroke} d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+  );
+  if (name==="trash") return (
+    <svg {...common}><path {...stroke} d="M3 6h18"/><path {...stroke} d="M8 6V4h8v2"/><path {...stroke} d="M19 6l-1 14H6L5 6"/><path {...stroke} d="M10 11v6"/><path {...stroke} d="M14 11v6"/></svg>
+  );
+  if (name==="chat") return (
+    <svg {...common}><path {...stroke} d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>
+  );
+  if (name==="x") return (
+    <svg {...common}><path {...stroke} d="M18 6L6 18"/><path {...stroke} d="M6 6l12 12"/></svg>
+  );
+  if (name==="copy") return (
+    <svg {...common}><rect {...stroke} x="9" y="9" width="13" height="13" rx="2"/><rect {...stroke} x="2" y="2" width="13" height="13" rx="2"/></svg>
+  );
+  if (name==="image") return (
+    <svg {...common}><rect {...stroke} x="3" y="4" width="18" height="16" rx="2"/><path {...stroke} d="M8 11l2-2 4 4 2-2 3 3"/><circle {...stroke} cx="8" cy="8" r="1"/></svg>
+  );
+  return null;
+}
+
+/** ================== UI PRIMITIVES (shadcn-ish) ================== **/
+function Button({variant="default", size="md", className="", ...props}){
+  const v = variant==="primary" ? "btn btn-primary" :
+            variant==="danger" ? "btn btn-danger" :
+            variant==="ghost" ? "btn btn-ghost" : "btn";
+  const s = size==="sm" ? "btn-sm" : "";
+  return <button className={`${v} ${s} ${className}`.trim()} {...props} />;
+}
+function Input(props){ return <input className="input" {...props} />; }
+function Select(props){ return <select className="select" {...props} />; }
+function Textarea(props){ return <textarea className="textarea" {...props} />; }
+function Card({title, right, children}){
   return (
-    <div className={cls("bg-white border border-zinc-200 rounded-2xl shadow-soft", className)}>
-      {children}
+    <div className="card">
+      <div className="card-inner">
+        {(title || right) && (
+          <div className="card-title">
+            <h2>{title}</h2>
+            <div className="row">{right}</div>
+          </div>
+        )}
+        {children}
+      </div>
     </div>
   );
 }
-function CardHeader({ className, children }) {
-  return <div className={cls("p-4 pb-2", className)}>{children}</div>;
-}
-function CardContent({ className, children }) {
-  return <div className={cls("p-4 pt-2", className)}>{children}</div>;
-}
-function Button({ className, variant="default", size="md", disabled, onClick, children, title }) {
-  const base = "inline-flex items-center justify-center gap-2 rounded-xl font-semibold transition active:scale-[0.99] disabled:opacity-50 disabled:pointer-events-none";
-  const sizes = {
-    sm: "h-9 px-3 text-sm",
-    md: "h-10 px-4 text-sm",
-    lg: "h-11 px-5 text-base"
-  };
-  const variants = {
-    default: "bg-zinc-900 text-white hover:bg-zinc-800",
-    secondary: "bg-zinc-100 text-zinc-900 hover:bg-zinc-200",
-    outline: "border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-900",
-    danger: "bg-red-600 text-white hover:bg-red-500",
-    ghost: "bg-transparent hover:bg-zinc-100 text-zinc-900"
-  };
-  return (
-    <button title={title} disabled={disabled} onClick={onClick} className={cls(base, sizes[size], variants[variant], className)}>
-      {children}
-    </button>
-  );
-}
-function Input({ className, ...props }) {
-  return (
-    <input
-      className={cls(
-        "h-10 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm outline-none",
-        "focus:ring-2 focus:ring-zinc-200",
-        className
-      )}
-      {...props}
-    />
-  );
-}
-function Textarea({ className, ...props }) {
-  return (
-    <textarea
-      className={cls(
-        "min-h-[120px] w-full rounded-xl border border-zinc-200 bg-white p-3 text-sm outline-none",
-        "focus:ring-2 focus:ring-zinc-200",
-        className
-      )}
-      {...props}
-    />
-  );
-}
-function Switch({ checked, onChange, label }) {
-  return (
-    <button
-      onClick={() => onChange(!checked)}
-      className={cls(
-        "relative inline-flex h-6 w-11 items-center rounded-full border transition",
-        checked ? "bg-zinc-900 border-zinc-900" : "bg-white border-zinc-200"
-      )}
-      aria-label={label}
-      title={label}
-      type="button"
-    >
-      <span
-        className={cls(
-          "inline-block h-5 w-5 transform rounded-full bg-white shadow transition",
-          checked ? "translate-x-5" : "translate-x-1",
-          !checked && "bg-zinc-200"
-        )}
-      />
-    </button>
-  );
-}
-function Badge({ children, className }) {
-  return (
-    <span className={cls("inline-flex items-center rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-semibold text-zinc-700", className)}>
-      {children}
-    </span>
-  );
-}
-function Divider() {
-  return <div className="h-px w-full bg-zinc-200" />;
-}
-
-// ===================== Modal =====================
-function Modal({ open, onClose, title, children, footer }) {
+function Modal({open, title, children, onClose, footer}){
   return (
     <AnimatePresence>
       {open && (
-        <motion.div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        <motion.div className="backdrop"
+          initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
+          onMouseDown={(e)=>{ if (e.target === e.currentTarget) onClose?.(); }}
         >
-          <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-          <motion.div
-            className="relative w-full max-w-lg rounded-2xl bg-white shadow-soft border border-zinc-200"
-            initial={{ scale: 0.98, y: 8, opacity: 0 }}
-            animate={{ scale: 1, y: 0, opacity: 1 }}
-            exit={{ scale: 0.98, y: 8, opacity: 0 }}
+          <motion.div className="modal"
+            initial={{opacity:0, y:18, scale:.98}}
+            animate={{opacity:1, y:0, scale:1}}
+            exit={{opacity:0, y:18, scale:.98}}
+            transition={{type:"spring", stiffness:340, damping:26}}
           >
-            <div className="flex items-center justify-between p-4 border-b border-zinc-200">
-              <div className="text-base font-extrabold">{title}</div>
-              <Button variant="ghost" size="sm" onClick={onClose}><X size={18} /></Button>
+            <div className="modal-header">
+              <h2>{title}</h2>
+              <Button className="btn-icon" variant="ghost" onClick={onClose} aria-label="close">
+                <Icon name="x" />
+              </Button>
             </div>
-            <div className="p-4">{children}</div>
-            {footer && <div className="p-4 pt-0">{footer}</div>}
+            <div className="modal-body">{children}</div>
+            {footer && <div className="modal-footer">{footer}</div>}
           </motion.div>
         </motion.div>
       )}
@@ -179,31 +168,30 @@ function Modal({ open, onClose, title, children, footer }) {
   );
 }
 
-// ===================== Toasts =====================
-function useToasts() {
-  const [items, setItems] = useState([]);
-  const push = (type, text) => {
+/** ================== TOAST ================== **/
+function useToasts(){
+  const [toasts, setToasts] = useState([]);
+  function push({title="알림", message="", kind="info"}){
     const id = Math.random().toString(36).slice(2);
-    setItems((x) => [...x, { id, type, text }]);
-    setTimeout(() => setItems((x) => x.filter((t) => t.id !== id)), 3000);
-  };
+    setToasts(t => [{id, title, message, kind}, ...t].slice(0,5));
+    setTimeout(()=>setToasts(t=>t.filter(x=>x.id!==id)), 3800);
+  }
   const node = (
-    <div className="fixed bottom-4 right-4 z-[60] flex flex-col gap-2">
+    <div className="toast-wrap">
       <AnimatePresence>
-        {items.map((t) => (
+        {toasts.map(t=>(
           <motion.div
             key={t.id}
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 8 }}
-            className={cls(
-              "rounded-2xl px-4 py-3 shadow-soft border text-sm font-semibold",
-              t.type === "error" ? "bg-red-50 border-red-200 text-red-700" :
-              t.type === "ok" ? "bg-emerald-50 border-emerald-200 text-emerald-700" :
-              "bg-white border-zinc-200 text-zinc-800"
-            )}
+            className="toast"
+            initial={{opacity:0, y:12, scale:.98}}
+            animate={{opacity:1, y:0, scale:1}}
+            exit={{opacity:0, y:12, scale:.98}}
           >
-            {t.text}
+            <div className="ticon">{t.kind==="ok" ? "✓" : t.kind==="err" ? "!" : "•"}</div>
+            <div>
+              <b>{t.title}</b>
+              <p>{t.message}</p>
+            </div>
           </motion.div>
         ))}
       </AnimatePresence>
@@ -212,859 +200,867 @@ function useToasts() {
   return { push, node };
 }
 
-// ===================== Markdown renderer =====================
-function Md({ text }) {
-  return (
-    <div className="prose-like text-sm text-zinc-800">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-        {text || ""}
-      </ReactMarkdown>
-    </div>
-  );
+/** ================== AUTH ================== **/
+function loadAuth(){
+  const token = localStorage.getItem(LS_TOKEN) || "";
+  const user = (()=>{ try { return JSON.parse(localStorage.getItem(LS_USER)||"null"); } catch { return null; }})();
+  return { token, user };
 }
+function saveAuth(token, user){
+  if (token) localStorage.setItem(LS_TOKEN, token); else localStorage.removeItem(LS_TOKEN);
+  if (user) localStorage.setItem(LS_USER, JSON.stringify(user)); else localStorage.removeItem(LS_USER);
+}
+function useAuth(toast){
+  const [{token, user}, setState] = useState(loadAuth());
 
-// ===================== App =====================
-function App() {
-  const { push, node: toastNode } = useToasts();
-
-  // session
-  const [token, setTokenState] = useState(getToken());
-  const [me, setMe] = useState(null);
-
-  // feed
-  const [posts, setPosts] = useState([]);
-  const [nextCursor, setNextCursor] = useState("");
-  const [loadingFeed, setLoadingFeed] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
-
-  // UI state
-  const [sort, setSort] = useState("latest"); // latest | hot
-  const [category, setCategory] = useState("all");
-  const [q, setQ] = useState("");
-
-  // modals
-  const [openAuth, setOpenAuth] = useState(false);
-  const [authTab, setAuthTab] = useState("login"); // login|register
-  const [openComposer, setOpenComposer] = useState(false);
-  const [openPost, setOpenPost] = useState(false);
-  const [activePostId, setActivePostId] = useState("");
-  const [activePost, setActivePost] = useState(null);
-  const [comments, setComments] = useState([]);
-  const [loadingPost, setLoadingPost] = useState(false);
-
-  // realtime WS
-  const wsRef = useRef(null);
-  const wsConnectedRef = useRef(false);
-
-  // composer
-  const [newTitle, setNewTitle] = useState("");
-  const [newBody, setNewBody] = useState("");
-  const [newAnonymous, setNewAnonymous] = useState(false);
-  const [newCategory, setNewCategory] = useState("free");
-
-  // comment composer
-  const [cBody, setCBody] = useState("");
-  const [cAnonymous, setCAnonymous] = useState(false);
-
-  // edit post
-  const [editing, setEditing] = useState(false);
-  const [editTitle, setEditTitle] = useState("");
-  const [editBody, setEditBody] = useState("");
-  const [editAnonymous, setEditAnonymous] = useState(false);
-
-  // ---------------- load me ----------------
-  useEffect(() => {
-    (async () => {
-      if (!token) { setMe(null); return; }
-      try {
-        const data = await apiFetch("/auth/me", { token });
-        if (data?.ok) setMe(data.user);
-      } catch (e) {
-        setToken("");
-      }
-    })();
-  }, [token]);
-
-  function setToken(t) {
-    setTokenState(t);
-    setToken(t);
-  }
-  function setToken(t) {
-    setTokenState(t);
-    setTokenState(t);
-    if (!t) localStorage.removeItem("SRT_TOKEN");
-    else localStorage.setItem("SRT_TOKEN", t);
-  }
-
-  // ---------------- feed load ----------------
-  async function loadFeed({ reset=false } = {}) {
-    if (loadingFeed) return;
-    setLoadingFeed(true);
-    try {
-      const cursor = reset ? "" : nextCursor;
-      const params = new URLSearchParams();
-      params.set("sort", sort);
-      params.set("category", category);
-      if (q.trim()) params.set("q", q.trim());
-      params.set("pageSize", String(PAGE_SIZE));
-      if (cursor) params.set("cursor", cursor);
-
-      const data = await apiFetch(`/posts?${params.toString()}`);
-      if (reset) setPosts(data.posts || []);
-      else setPosts((p) => [...p, ...(data.posts || [])]);
-      setNextCursor(data.nextCursor || "");
-      setHasMore(!!(data.nextCursor && (data.posts || []).length));
-    } catch (e) {
-      push("error", e.message || "피드 불러오기 실패");
-    } finally {
-      setLoadingFeed(false);
+  async function refreshMe(){
+    if (!token) return;
+    try{
+      const r = await apiFetch("/auth/me", { token });
+      setState(s => ({...s, user: r.user}));
+      saveAuth(token, r.user);
+    }catch(e){
+      // 토큰 만료 등
+      setState({token:"", user:null});
+      saveAuth("", null);
     }
   }
 
-  useEffect(() => {
-    // 초기/필터 변경 시 리셋
-    setPosts([]);
-    setNextCursor("");
-    setHasMore(true);
-    loadFeed({ reset: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sort, category]);
+  async function login(identifier, password){
+    const r = await apiFetch("/auth/login", { method:"POST", body:{identifier, password} });
+    setState({ token:r.token, user:r.user });
+    saveAuth(r.token, r.user);
+    toast.push({title:"로그인 성공", message:`${r.user.nickname}님 환영해요`, kind:"ok"});
+  }
 
-  // 검색은 타이핑 끝나고 살짝 딜레이
-  useEffect(() => {
-    const t = setTimeout(() => {
-      setPosts([]);
-      setNextCursor("");
-      setHasMore(true);
-      loadFeed({ reset: true });
-    }, 350);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q]);
+  async function register(nickname, password, studentId){
+    await apiFetch("/auth/register", { method:"POST", body:{nickname, password, studentId} });
+    toast.push({title:"가입 완료", message:"이제 로그인하면 돼요", kind:"ok"});
+  }
 
-  // infinite scroll sentinel
-  const sentinelRef = useRef(null);
-  useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el) return;
-    const io = new IntersectionObserver(async (entries) => {
-      if (!entries[0].isIntersecting) return;
-      if (!hasMore || loadingFeed) return;
-      await loadFeed({ reset: false });
-    }, { rootMargin: "800px" });
-    io.observe(el);
-    return () => io.disconnect();
-  }, [hasMore, loadingFeed, nextCursor, sort, category, q]);
+  async function logout(){
+    try{
+      if (token) await apiFetch("/auth/logout", { method:"POST", token });
+    }catch{}
+    setState({token:"", user:null});
+    saveAuth("", null);
+    toast.push({title:"로그아웃", message:"안전하게 로그아웃했어요", kind:"ok"});
+  }
 
-  // ---------------- realtime ----------------
-  useEffect(() => {
-    // WS는 실제 페이지(예: github.io)에서만 정상 테스트 가능.
-    // chrome devtools 콘솔에서 example.com/확장페이지/새탭 등은 CSP로 막힘.
-    connectWS();
-    return () => disconnectWS();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  useEffect(()=>{ refreshMe(); /* eslint-disable-next-line */ }, []);
+  return { token, user, login, register, logout, refreshMe };
+}
 
-  function connectWS() {
-    disconnectWS();
-    const ws = new WebSocket(`${WS_BASE}/realtime?channel=feed`);
+/** ================== ROUTER (hash) ================== **/
+function useRoute(){
+  const [route, setRoute] = useState(parseHash());
+  function parseHash(){
+    const h = (location.hash || "#/").slice(1); // "/"
+    const parts = h.split("/").filter(Boolean);
+    if (parts[0]==="post" && parts[1]) return { name:"post", id: parts[1] };
+    return { name:"feed" };
+  }
+  useEffect(()=>{
+    const on = ()=>setRoute(parseHash());
+    window.addEventListener("hashchange", on);
+    return ()=>window.removeEventListener("hashchange", on);
+  },[]);
+  return route;
+}
+
+/** ================== REALTIME WS ================== **/
+function useRealtime({enabled=true, onEvent, toast}){
+  const wsRef = useRef(null);
+  const [status, setStatus] = useState("off"); // off|on|err
+  useEffect(()=>{
+    if (!enabled) return;
+
+    const url = new URL(API_BASE + "/realtime?channel=feed");
+    url.protocol = url.protocol.replace("http","ws"); // ws/wss
+    const ws = new WebSocket(url.toString());
     wsRef.current = ws;
 
-    ws.onopen = () => {
-      wsConnectedRef.current = true;
+    let alive = true;
+    setStatus("on");
+
+    ws.onopen = ()=>{ if (!alive) return; setStatus("on"); };
+    ws.onerror = ()=>{ if (!alive) return; setStatus("err"); };
+    ws.onclose = ()=>{ if (!alive) return; setStatus("off"); };
+
+    ws.onmessage = (e)=>{
+      try{
+        const msg = JSON.parse(e.data);
+        if (msg?.type==="event") onEvent?.(msg.payload);
+      }catch{}
     };
-    ws.onclose = () => {
-      wsConnectedRef.current = false;
-      // 약간 쉬고 재연결
-      setTimeout(() => connectWS(), 1200);
+
+    const ping = setInterval(()=>{
+      try{ ws.send("ping"); }catch{}
+    }, 25000);
+
+    return ()=>{
+      alive = false;
+      clearInterval(ping);
+      try{ ws.close(); }catch{}
     };
-    ws.onerror = () => {
-      wsConnectedRef.current = false;
-    };
-    ws.onmessage = (evt) => {
-      try {
-        const msg = JSON.parse(evt.data);
-        if (msg?.type !== "event") return;
-        const p = msg.payload || {};
-        // 최근 24h 범위만 publish되지만, 여기서도 보수적으로 처리
-        if (p.kind === "post_created") {
-          // 새 글은 상단 prepend(정렬 latest일 때)
-          if (sort === "latest" && (category === "all" || category === "free" || category === p.category)) {
-            // 실제 내용은 listPosts에서 다시 받아오고 싶지만,
-            // 과도한 fetch를 피하려고 "새 글 있음" UX만 제공하는 것도 가능.
-            // 여기서는 간단히 리프레시 유도.
-            push("info", "새 글이 올라왔어요. 위로 스크롤 후 새로고침/검색을 눌러 확인!");
-          }
+  }, [enabled]);
+
+  const badge = (
+    <span className={`badge ${status==="on" ? "" : status==="err" ? "badge-warn" : "badge-off"}`}>
+      <span className="badge-dot"></span>
+      {status==="on" ? "Live" : status==="err" ? "Reconnecting" : "Offline"}
+    </span>
+  );
+
+  return { status, badge };
+}
+
+/** ================== FEED ================== **/
+function FeedPage({auth, toast}){
+  const { token, user } = auth;
+
+  const [category, setCategory] = useState("all");
+  const [sort, setSort] = useState("latest");
+  const [q, setQ] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const [posts, setPosts] = useState([]);
+  const [cursor, setCursor] = useState("");
+  const [hasMore, setHasMore] = useState(true);
+
+  const [openAuth, setOpenAuth] = useState(false);
+  const [authTab, setAuthTab] = useState("login"); // login|register
+  const [openEditor, setOpenEditor] = useState(false);
+  const [editTarget, setEditTarget] = useState(null);
+
+  async function load({reset=false}={}){
+    if (loading) return;
+    setLoading(true);
+    try{
+      const r = await apiFetch("/posts", {
+        token: token || null,
+        qs: {
+          category, sort, q,
+          cursor: reset ? "" : cursor,
+          pageSize: 50
         }
-        if (p.kind === "post_updated" || p.kind === "post_removed" || p.kind === "comment_created") {
-          // 현재 보고 있는 글이 관련이면 재로딩
-          if (openPost && activePostId && (p.postId === activePostId)) {
-            openPostDetail(activePostId, { silent: true });
-          }
-        }
-      } catch {
-        // ignore
+      });
+      const newPosts = r.posts || [];
+      setPosts(prev => reset ? newPosts : [...prev, ...newPosts]);
+      setCursor(r.nextCursor || "");
+      setHasMore(Boolean(r.nextCursor));
+    }catch(e){
+      toast.push({title:"불러오기 실패", message:e.message, kind:"err"});
+    }finally{
+      setLoading(false);
+    }
+  }
+
+  // initial / filters
+  useEffect(()=>{
+    setPosts([]); setCursor(""); setHasMore(true);
+    load({reset:true});
+    // eslint-disable-next-line
+  }, [category, sort]);
+
+  // debounced search
+  useEffect(()=>{
+    const t = setTimeout(()=>{
+      setPosts([]); setCursor(""); setHasMore(true);
+      load({reset:true});
+    }, 350);
+    return ()=>clearTimeout(t);
+    // eslint-disable-next-line
+  }, [q]);
+
+  // infinite scroll
+  useEffect(()=>{
+    function onScroll(){
+      const near = (window.innerHeight + window.scrollY) > (document.body.offsetHeight - 900);
+      if (near && hasMore && !loading) load({reset:false});
+    }
+    window.addEventListener("scroll", onScroll);
+    return ()=>window.removeEventListener("scroll", onScroll);
+  }, [hasMore, loading, cursor, category, sort, q]);
+
+  // realtime updates
+  const rt = useRealtime({
+    enabled: true,
+    toast,
+    onEvent: async (ev)=>{
+      if (!ev?.kind) return;
+      if (ev.kind==="post_created"){
+        // 새 글이면 가장 위로: 해당 글 상세를 한 번 fetch해서 prepend (가벼운 처리)
+        try{
+          const r = await apiFetch(`/posts/${ev.postId}`, { token: token || null });
+          setPosts(prev => [r.post, ...prev].slice(0, 3000)); // 프론트 메모리만 적당히
+        }catch{}
+        return;
       }
-    };
-  }
-
-  function disconnectWS() {
-    const ws = wsRef.current;
-    wsRef.current = null;
-    try { ws?.close(); } catch {}
-  }
-
-  // ---------------- auth actions ----------------
-  async function doRegister({ nickname, studentId, password }) {
-    const body = { nickname, studentId: studentId || "", password };
-    await apiFetch("/auth/register", { method: "POST", jsonBody: body });
-    push("ok", "회원가입 완료! 로그인 해주세요.");
-    setAuthTab("login");
-  }
-
-  async function doLogin({ identifier, password }) {
-    const data = await apiFetch("/auth/login", { method: "POST", jsonBody: { identifier, password } });
-    if (data?.ok) {
-      setToken(data.token);
-      setMe(data.user);
-      setOpenAuth(false);
-      push("ok", `환영합니다, ${data.user.nickname}!`);
-    }
-  }
-
-  async function doLogout() {
-    try { await apiFetch("/auth/logout", { method: "POST", token }); } catch {}
-    setToken("");
-    setMe(null);
-    push("ok", "로그아웃 완료");
-  }
-
-  // ---------------- posts actions ----------------
-  async function createNewPost() {
-    if (!me) { push("error", "로그인이 필요해요"); setOpenAuth(true); return; }
-    if (!newTitle.trim() || !newBody.trim()) { push("error", "제목/내용을 입력해줘"); return; }
-
-    try {
-      await apiFetch("/posts", {
-        method: "POST",
-        token,
-        jsonBody: { category: newCategory, title: newTitle.trim(), bodyMd: newBody, anonymous: newAnonymous },
-      });
-      push("ok", "게시글 등록 완료");
-      setOpenComposer(false);
-      setNewTitle(""); setNewBody(""); setNewAnonymous(false); setNewCategory("free");
-      // 새로고침
-      await loadFeed({ reset: true });
-    } catch (e) {
-      push("error", e.message || "게시글 등록 실패");
-    }
-  }
-
-  async function toggleLike(targetType, targetId) {
-    if (!me) { push("error", "로그인이 필요해요"); setOpenAuth(true); return; }
-    try {
-      const data = await apiFetch("/likes/toggle", { method: "POST", token, jsonBody: { targetType, targetId } });
-      if (targetType === "post") {
-        // 낙관적 업데이트
-        setPosts((p) => p.map((x) => x.id === targetId ? { ...x, likes: Math.max(0, (x.likes || 0) + (data.liked ? 1 : -1)) } : x));
-        if (activePost?.id === targetId) setActivePost((x) => x ? { ...x, likes: Math.max(0, (x.likes || 0) + (data.liked ? 1 : -1)) } : x);
+      if (ev.kind==="post_updated"){
+        try{
+          const r = await apiFetch(`/posts/${ev.postId}`, { token: token || null });
+          setPosts(prev => prev.map(p=>p.id===ev.postId ? r.post : p));
+        }catch{}
+        return;
       }
-      push("ok", data.liked ? "좋아요!" : "좋아요 취소");
-    } catch (e) {
-      push("error", e.message || "좋아요 실패");
+      if (ev.kind==="post_removed"){
+        setPosts(prev => prev.filter(p=>p.id!==ev.postId));
+        return;
+      }
+      if (ev.kind==="comment_created"){
+        // 댓글 수만 증가시키기
+        setPosts(prev => prev.map(p => p.id===ev.postId ? {...p, comments:(p.comments||0)+1} : p));
+        return;
+      }
+    }
+  });
+
+  function openNew(){
+    if (!token){
+      setAuthTab("login");
+      setOpenAuth(true);
+      toast.push({title:"로그인 필요", message:"글 작성은 로그인 후 가능해요", kind:"info"});
+      return;
+    }
+    setEditTarget(null);
+    setOpenEditor(true);
+  }
+
+  async function likePost(postId){
+    if (!token){
+      setAuthTab("login"); setOpenAuth(true);
+      toast.push({title:"로그인 필요", message:"좋아요는 로그인 후 가능해요", kind:"info"});
+      return;
+    }
+    try{
+      await apiFetch("/likes/toggle", { method:"POST", token, body:{targetType:"post", targetId:postId} });
+      // 서버에서 카운트 반환이 없으니, 낙관적 업데이트(+1/-1) 대신 상세 재조회가 안전.
+      const r = await apiFetch(`/posts/${postId}`, { token });
+      setPosts(prev => prev.map(p=>p.id===postId ? r.post : p));
+    }catch(e){
+      toast.push({title:"좋아요 실패", message:e.message, kind:"err"});
     }
   }
 
-  async function report(targetType, targetId) {
-    if (!me) { push("error", "로그인이 필요해요"); setOpenAuth(true); return; }
-    const reason = prompt("신고 사유(짧게)", "기타") || "기타";
-    const detail = prompt("상세 내용(선택)", "") || "";
-    try {
-      await apiFetch("/reports", { method: "POST", token, jsonBody: { targetType, targetId, reason, detail } });
-      push("ok", "신고 접수 완료");
-    } catch (e) {
-      push("error", e.message || "신고 실패");
+  async function report(targetType, targetId){
+    if (!token){
+      setAuthTab("login"); setOpenAuth(true);
+      toast.push({title:"로그인 필요", message:"신고는 로그인 후 가능해요", kind:"info"});
+      return;
+    }
+    const reason = prompt("신고 사유(짧게) ex) 스팸/욕설/도배/기타") || "";
+    if (!reason.trim()) return;
+    const detail = prompt("추가 설명(선택)") || "";
+    try{
+      await apiFetch("/reports", { method:"POST", token, body:{targetType, targetId, reason, detail} });
+      toast.push({title:"신고 접수", message:"관리자가 확인할게요", kind:"ok"});
+    }catch(e){
+      toast.push({title:"신고 실패", message:e.message, kind:"err"});
     }
   }
 
-  async function openPostDetail(postId, { silent=false } = {}) {
-    setActivePostId(postId);
-    setOpenPost(true);
-    setLoadingPost(true);
-    try {
-      // post는 /posts list에 상세 endpoint가 없어서:
-      // 1) 현재 posts에서 찾고,
-      // 2) comments는 /posts/:id/comments로 불러옴
-      const p = posts.find((x) => x.id === postId) || activePost;
-      if (p) setActivePost(p);
+  function openEdit(p){
+    setEditTarget(p);
+    setOpenEditor(true);
+  }
 
-      const data = await apiFetch(`/posts/${postId}/comments`);
-      setComments(data.comments || []);
-      if (!silent) push("info", "댓글 로드 완료");
-    } catch (e) {
-      push("error", e.message || "게시물 로드 실패");
-    } finally {
-      setLoadingPost(false);
+  async function deletePost(p){
+    if (!token){ toast.push({title:"불가", message:"로그인이 필요해요", kind:"err"}); return; }
+    if (!p.canDelete){ toast.push({title:"권한 없음", message:"관리자만 삭제 가능", kind:"err"}); return; }
+    if (!confirm("정말 삭제할까요? (관리자 삭제)")) return;
+
+    try{
+      await apiFetch(`/posts/${p.id}`, { method:"DELETE", token });
+      setPosts(prev => prev.filter(x=>x.id!==p.id));
+      toast.push({title:"삭제 완료", message:"게시물이 제거됐어요", kind:"ok"});
+    }catch(e){
+      toast.push({title:"삭제 실패", message:e.message, kind:"err"});
     }
   }
-
-  async function submitComment() {
-    if (!me) { push("error", "로그인이 필요해요"); setOpenAuth(true); return; }
-    if (!activePostId) return;
-    if (!cBody.trim()) { push("error", "댓글 내용을 입력해줘"); return; }
-
-    try {
-      await apiFetch(`/posts/${activePostId}/comments`, {
-        method: "POST",
-        token,
-        jsonBody: { bodyMd: cBody, anonymous: cAnonymous },
-      });
-      setCBody("");
-      setCAnonymous(false);
-      await openPostDetail(activePostId, { silent: true });
-      push("ok", "댓글 등록 완료");
-    } catch (e) {
-      push("error", e.message || "댓글 등록 실패");
-    }
-  }
-
-  function canEditPost(p) {
-    return me && p && !p.anonymous && me.nickname && p.authorName === me.nickname; // 비익명일 때만 이름으로 비교됨
-  }
-  // 서버는 author_id로 권한 체크하므로 프론트의 canEdit은 UX용일 뿐
-  // 익명글도 작성자면 수정 가능하지만, API에서 처리됨. 여기서는 "내 글인지"를 정확히 알기 어려움.
-  // 그래서 편의상 "수정 버튼은 로그인 상태에서만" + "시도는 허용"으로.
-  function canTryEdit() {
-    return !!me;
-  }
-  function canDeleteAdmin() {
-    return me && (me.role === "admin" || me.role === "mod");
-  }
-
-  async function startEditPost() {
-    if (!activePost) return;
-    if (!canTryEdit()) { push("error", "로그인이 필요해요"); setOpenAuth(true); return; }
-    setEditing(true);
-    setEditTitle(activePost.title || "");
-    setEditBody(activePost.bodyMd || "");
-    setEditAnonymous(!!activePost.anonymous);
-  }
-
-  async function saveEditPost() {
-    if (!activePostId) return;
-    try {
-      await apiFetch(`/posts/${activePostId}`, {
-        method: "PATCH",
-        token,
-        jsonBody: {
-          title: editTitle.trim(),
-          bodyMd: editBody,
-          anonymous: editAnonymous,
-        },
-      });
-      push("ok", "수정 완료");
-      setEditing(false);
-      await loadFeed({ reset: true });
-      await openPostDetail(activePostId, { silent: true });
-    } catch (e) {
-      push("error", e.message || "수정 실패(작성자만 가능)");
-    }
-  }
-
-  async function deletePost() {
-    if (!activePostId) return;
-    if (!canDeleteAdmin()) { push("error", "관리자만 삭제 가능"); return; }
-    if (!confirm("이 게시글을 삭제할까요? (관리자만 가능)")) return;
-    try {
-      await apiFetch(`/posts/${activePostId}`, { method: "DELETE", token });
-      push("ok", "삭제 완료");
-      setOpenPost(false);
-      setActivePost(null);
-      setComments([]);
-      await loadFeed({ reset: true });
-    } catch (e) {
-      push("error", e.message || "삭제 실패");
-    }
-  }
-
-  // ---------------- UI ----------------
-  const wsBadge = wsConnectedRef.current ? "LIVE" : "OFF";
 
   return (
-    <div className="min-h-screen">
-      {toastNode}
-
-      <TopBar
-        me={me}
-        wsBadge={wsBadge}
-        onLogin={() => { setAuthTab("login"); setOpenAuth(true); }}
-        onRegister={() => { setAuthTab("register"); setOpenAuth(true); }}
-        onLogout={doLogout}
-        sort={sort} setSort={setSort}
-        category={category} setCategory={setCategory}
-        q={q} setQ={setQ}
-        onNewPost={() => setOpenComposer(true)}
-      />
-
-      <div className="mx-auto w-full max-w-3xl px-4 pb-16">
-        <div className="mt-4 grid gap-3">
-          {posts.map((p) => (
-            <PostCard
-              key={p.id}
-              post={p}
-              onOpen={() => openPostDetail(p.id)}
-              onLike={() => toggleLike("post", p.id)}
-              onReport={() => report("post", p.id)}
-            />
-          ))}
-
-          <div ref={sentinelRef} />
-
-          {loadingFeed && (
-            <Card className="p-4">
-              <div className="text-sm text-zinc-600">불러오는 중...</div>
-            </Card>
-          )}
-
-          {!loadingFeed && posts.length === 0 && (
-            <Card className="p-6">
-              <div className="text-sm text-zinc-600">아직 글이 없어요. 첫 글을 작성해보세요.</div>
-            </Card>
-          )}
-
-          {!loadingFeed && !hasMore && posts.length > 0 && (
-            <div className="text-center text-xs text-zinc-500 py-6">끝!</div>
-          )}
-        </div>
-      </div>
-
-      {/* Auth modal */}
-      <AuthModal
-        open={openAuth}
-        onClose={() => setOpenAuth(false)}
-        tab={authTab}
-        setTab={setAuthTab}
-        onLogin={doLogin}
-        onRegister={doRegister}
-      />
-
-      {/* Composer */}
-      <Modal
-        open={openComposer}
-        onClose={() => setOpenComposer(false)}
-        title="새 글 작성"
-        footer={
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 text-xs text-zinc-600">
-              <span className="font-bold">익명</span>
-              <Switch checked={newAnonymous} onChange={setNewAnonymous} label="익명 토글" />
-              <span className="ml-2 text-zinc-500">이미지/영상은 링크를 마크다운으로: <code>![](링크)</code></span>
-            </div>
-            <Button onClick={createNewPost}><Send size={16} />등록</Button>
-          </div>
-        }
-      >
-        <div className="grid gap-3">
-          <div className="grid gap-2">
-            <label className="text-xs font-bold text-zinc-700">카테고리</label>
-            <div className="flex gap-2 flex-wrap">
-              {["free","notice","question","lost","market"].map((c) => (
-                <Button
-                  key={c}
-                  variant={newCategory === c ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setNewCategory(c)}
-                >
-                  {c}
+    <>
+      <div className="grid">
+        <div className="col">
+          <Card
+            title="피드"
+            right={
+              <>
+                {rt.badge}
+                <Button variant="primary" onClick={openNew}>
+                  <Icon name="plus" /> 글쓰기
                 </Button>
-              ))}
-            </div>
-          </div>
-          <div className="grid gap-2">
-            <label className="text-xs font-bold text-zinc-700">제목</label>
-            <Input value={newTitle} onChange={(e) => setNewTitle(e.target.value)} placeholder="제목" />
-          </div>
-          <div className="grid gap-2">
-            <label className="text-xs font-bold text-zinc-700">내용 (Markdown 지원)</label>
-            <Textarea value={newBody} onChange={(e) => setNewBody(e.target.value)} placeholder={"예)\n# 제목\n**굵게**\n> 인용\n![](https://...)\n"} />
-          </div>
-          <Divider />
-          <div className="grid gap-2">
-            <div className="text-xs font-bold text-zinc-700">미리보기</div>
-            <Card className="p-3 bg-zinc-50">
-              <Md text={newBody} />
-            </Card>
-          </div>
-        </div>
-      </Modal>
+              </>
+            }
+          >
+            <div className="row">
+              <Select value={category} onChange={(e)=>setCategory(e.target.value)}>
+                <option value="all">전체</option>
+                <option value="free">자유</option>
+                <option value="qna">Q&A</option>
+                <option value="notice">공지(운영)</option>
+              </Select>
 
-      {/* Post detail */}
-      <Modal
-        open={openPost}
-        onClose={() => { setOpenPost(false); setActivePost(null); setComments([]); setEditing(false); }}
-        title="게시글"
-        footer={activePost && (
-          <div className="grid gap-3">
-            {editing ? (
-              <div className="flex justify-end gap-2">
-                <Button variant="secondary" onClick={() => setEditing(false)}>취소</Button>
-                <Button onClick={saveEditPost}><Pencil size={16}/>저장</Button>
+              <Select value={sort} onChange={(e)=>setSort(e.target.value)}>
+                <option value="latest">최신</option>
+                <option value="hot">인기</option>
+              </Select>
+
+              <div style={{flex:1, minWidth:220}}>
+                <div className="row" style={{gap:8}}>
+                  <span className="kbd"><Icon name="search" size={14} /> 검색</span>
+                  <Input value={q} onChange={(e)=>setQ(e.target.value)} placeholder="제목/내용 검색" />
+                </div>
+              </div>
+            </div>
+
+            <div className="hr"></div>
+
+            <div className="col" style={{gap:10}}>
+              <AnimatePresence initial={false}>
+                {posts.map(p=>(
+                  <motion.div
+                    key={p.id}
+                    className="post"
+                    layout
+                    initial={{opacity:0, y:10}}
+                    animate={{opacity:1, y:0}}
+                    exit={{opacity:0, y:10}}
+                    transition={{type:"spring", stiffness:320, damping:24}}
+                    onClick={()=>{ location.hash = `#/post/${p.id}`; }}
+                    role="button"
+                    tabIndex={0}
+                  >
+                    <div className="spread">
+                      <div style={{display:"flex", alignItems:"center", gap:8, flexWrap:"wrap"}}>
+                        <span className="badge">
+                          <span className="badge-dot" style={{background:"rgba(167,139,250,.9)", boxShadow:"0 0 0 3px rgba(167,139,250,.14)"}}></span>
+                          {p.category}
+                        </span>
+                        {p.pinned && <span className="badge"><Icon name="bolt" size={14}/> 고정</span>}
+                      </div>
+                      <span className="small muted">{fmtTime(p.createdAt)}</span>
+                    </div>
+
+                    <h3 style={{marginTop:8}}>{p.title}</h3>
+
+                    <div className="post-meta">
+                      <span><Icon name="user" size={14}/> {p.authorName}{p.anonymous ? " (익명)" : ""}</span>
+                      <span>·</span>
+                      <span><Icon name="chat" size={14}/> {p.comments || 0}</span>
+                      <span>·</span>
+                      <span><Icon name="heart" size={14}/> {p.likes || 0}</span>
+                      {p.canEdit && (
+                        <>
+                          <span>·</span>
+                          <span className="badge">작성자</span>
+                        </>
+                      )}
+                      {user?.role==="admin" && <span className="badge">admin</span>}
+                    </div>
+
+                    <div className="post-actions" onClick={(e)=>e.stopPropagation()}>
+                      <Button size="sm" onClick={()=>likePost(p.id)}>
+                        <Icon name="heart" size={16}/> 좋아요
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={()=>report("post", p.id)}>
+                        <Icon name="flag" size={16}/> 신고
+                      </Button>
+
+                      {p.canEdit && (
+                        <Button size="sm" variant="ghost" onClick={()=>openEdit(p)}>
+                          <Icon name="edit" size={16}/> 수정
+                        </Button>
+                      )}
+                      {p.canDelete && (
+                        <Button size="sm" variant="danger" onClick={()=>deletePost(p)}>
+                          <Icon name="trash" size={16}/> 삭제(관리자)
+                        </Button>
+                      )}
+                    </div>
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+
+              <div className="center muted small" style={{padding:"12px 0"}}>
+                {loading ? "불러오는 중..." : hasMore ? "스크롤하면 더 불러와요" : "마지막 글까지 왔어요"}
+              </div>
+            </div>
+          </Card>
+        </div>
+
+        <div className="col">
+          <Card title="내 계정" right={<span className="badge"><span className="badge-dot"></span> Online</span>}>
+            {!token ? (
+              <div className="col">
+                <div className="muted small">
+                  읽기는 누구나 가능 · 쓰기는 로그인 필요
+                </div>
+                <div className="row">
+                  <Button variant="primary" onClick={()=>{ setAuthTab("login"); setOpenAuth(true); }}>
+                    <Icon name="logIn" /> 로그인
+                  </Button>
+                  <Button onClick={()=>{ setAuthTab("register"); setOpenAuth(true); }}>
+                    <Icon name="user" /> 회원가입
+                  </Button>
+                </div>
+                <div className="hr"></div>
+                <div className="small muted">
+                  이미지/동영상은 catbox 등에서 링크를 받아<br/>
+                  마크다운으로 <span className="kbd">![](링크)</span> 형태로 넣으면 돼요.
+                </div>
               </div>
             ) : (
-              <div className="flex items-center justify-between">
-                <div className="flex gap-2">
-                  <Button variant="secondary" onClick={() => toggleLike("post", activePost.id)} title="좋아요">
-                    <Heart size={16}/> {activePost.likes || 0}
-                  </Button>
-                  <Button variant="outline" onClick={() => report("post", activePost.id)} title="신고">
-                    <ShieldAlert size={16}/> 신고
-                  </Button>
-                </div>
-                <div className="flex gap-2">
-                  <Button variant="outline" onClick={startEditPost} title="수정(작성자만)">
-                    <Pencil size={16}/> 수정
-                  </Button>
-                  <Button variant="danger" onClick={deletePost} disabled={!canDeleteAdmin()} title="삭제(관리자만)">
-                    <Trash2 size={16}/> 삭제
-                  </Button>
-                </div>
-              </div>
-            )}
-
-            <Divider />
-
-            <div className="grid gap-2">
-              <div className="text-xs font-bold text-zinc-700">댓글 작성</div>
-              <Textarea value={cBody} onChange={(e) => setCBody(e.target.value)} placeholder="댓글 (Markdown 지원)" />
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 text-xs text-zinc-600">
-                  <span className="font-bold">익명</span>
-                  <Switch checked={cAnonymous} onChange={setCAnonymous} label="댓글 익명 토글" />
-                </div>
-                <Button onClick={submitComment}><Send size={16}/>댓글 등록</Button>
-              </div>
-            </div>
-          </div>
-        )}
-      >
-        {loadingPost && <div className="text-sm text-zinc-600">불러오는 중...</div>}
-
-        {!loadingPost && activePost && (
-          <div className="grid gap-4">
-            {!editing ? (
-              <div>
-                <div className="flex items-start justify-between gap-3">
-                  <div className="grid gap-1">
-                    <div className="text-lg font-extrabold">{activePost.title}</div>
-                    <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-600">
-                      <Badge>{activePost.category}</Badge>
-                      <span>{activePost.authorName}</span>
-                      <span className="text-zinc-400">·</span>
-                      <span>{formatTime(activePost.createdAt)}</span>
-                      {activePost.anonymous ? <Badge className="bg-zinc-900 text-white">익명</Badge> : null}
+              <div className="col">
+                <div className="row" style={{justifyContent:"space-between"}}>
+                  <div>
+                    <div style={{fontSize:14, fontWeight:700}}>{user?.nickname}</div>
+                    <div className="small muted">
+                      {user?.studentId ? `학번: ${user.studentId}` : "학번 미등록"}
+                      {" · "}
+                      role: {user?.role || "student"}
                     </div>
                   </div>
+                  <Button variant="ghost" onClick={auth.logout}>
+                    <Icon name="logOut" /> 로그아웃
+                  </Button>
                 </div>
 
-                <div className="mt-3">
-                  <Md text={activePost.bodyMd} />
-                </div>
-              </div>
-            ) : (
-              <div className="grid gap-3">
-                <div className="grid gap-2">
-                  <label className="text-xs font-bold text-zinc-700">제목</label>
-                  <Input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} />
-                </div>
-                <div className="grid gap-2">
-                  <label className="text-xs font-bold text-zinc-700">내용(Markdown)</label>
-                  <Textarea value={editBody} onChange={(e) => setEditBody(e.target.value)} />
-                </div>
-                <div className="flex items-center gap-2 text-xs text-zinc-600">
-                  <span className="font-bold">익명</span>
-                  <Switch checked={editAnonymous} onChange={setEditAnonymous} label="익명 토글" />
-                </div>
-                <Divider />
-                <div className="grid gap-2">
-                  <div className="text-xs font-bold text-zinc-700">미리보기</div>
-                  <Card className="p-3 bg-zinc-50"><Md text={editBody} /></Card>
+                <div className="hr"></div>
+
+                <div className="col" style={{gap:8}}>
+                  <div className="small muted">빠른 도구</div>
+                  <Button onClick={()=>{
+                    const url = prompt("catbox 등 업로드 링크를 붙여넣기") || "";
+                    if (!url.trim()) return;
+                    const md = `![](${url.trim()})`;
+                    navigator.clipboard?.writeText(md);
+                    toast.push({title:"복사됨", message: md, kind:"ok"});
+                  }}>
+                    <Icon name="image" /> 이미지 링크 → 마크다운 복사
+                  </Button>
+
+                  <Button variant="ghost" onClick={()=>{
+                    navigator.clipboard?.writeText(API_BASE);
+                    toast.push({title:"복사됨", message:"API_BASE를 복사했어요", kind:"ok"});
+                  }}>
+                    <Icon name="copy" /> API 주소 복사
+                  </Button>
                 </div>
               </div>
             )}
+          </Card>
 
-            <Divider />
-
-            <div className="grid gap-3">
-              <div className="flex items-center gap-2">
-                <MessageCircle size={18} />
-                <div className="font-extrabold">댓글</div>
-                <Badge>{comments.length}</Badge>
-              </div>
-
-              {comments.length === 0 && (
-                <div className="text-sm text-zinc-600">아직 댓글이 없어요.</div>
-              )}
-
-              <div className="grid gap-2">
-                {comments.map((c) => (
-                  <Card key={c.id} className="p-3">
-                    <div className="flex items-center justify-between">
-                      <div className="text-xs text-zinc-600 flex items-center gap-2">
-                        <span className="font-bold">{c.authorName}</span>
-                        {c.anonymous ? <Badge className="bg-zinc-900 text-white">익명</Badge> : null}
-                        <span className="text-zinc-400">·</span>
-                        <span>{formatTime(c.createdAt)}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Button variant="outline" size="sm" onClick={() => toggleLike("comment", c.id)} title="댓글 좋아요">
-                          <Heart size={16} />
-                        </Button>
-                        <Button variant="outline" size="sm" onClick={() => report("comment", c.id)} title="댓글 신고">
-                          <ShieldAlert size={16} />
-                        </Button>
-                      </div>
-                    </div>
-                    <div className="mt-2">
-                      <Md text={c.bodyMd} />
-                    </div>
-                  </Card>
-                ))}
+          <Card title="가이드" right={<span className="badge"><span className="badge-dot" style={{background:"rgba(245,158,11,.95)"}}></span> Tips</span>}>
+            <div className="small muted">
+              <div style={{marginBottom:8}}>마크다운 예시:</div>
+              <div className="kbd"># 제목</div>
+              <div className="kbd">## 소제목</div>
+              <div className="kbd">**굵게**</div>
+              <div className="kbd">&gt; 인용</div>
+              <div className="kbd">```코드```</div>
+              <div className="kbd">![](이미지링크)</div>
+              <div style={{marginTop:10}}>
+                실시간은 “최근 24시간 글”에 한해 이벤트로 반영돼요.
               </div>
             </div>
-          </div>
-        )}
-      </Modal>
-    </div>
-  );
-}
-
-// ===================== TopBar =====================
-function TopBar({
-  me, wsBadge,
-  onLogin, onRegister, onLogout,
-  sort, setSort,
-  category, setCategory,
-  q, setQ,
-  onNewPost
-}) {
-  return (
-    <div className="sticky top-0 z-40 border-b border-zinc-200 bg-white/80 backdrop-blur">
-      <div className="mx-auto w-full max-w-3xl px-4 py-3">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <div className="h-9 w-9 rounded-2xl bg-zinc-900 text-white flex items-center justify-center font-black">S</div>
-              <div className="leading-tight">
-                <div className="font-extrabold">SRT Community</div>
-                <div className="text-xs text-zinc-500 flex items-center gap-2">
-                  <span className={cls("px-2 py-0.5 rounded-full border text-[11px] font-bold",
-                    wsBadge === "LIVE" ? "border-emerald-200 text-emerald-700 bg-emerald-50" : "border-zinc-200 text-zinc-600 bg-zinc-50"
-                  )}>
-                    {wsBadge}
-                  </span>
-                  <span className="hidden sm:inline">피드/댓글 · Markdown · 익명</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Button onClick={onNewPost}><Send size={16}/>글쓰기</Button>
-            {me ? (
-              <>
-                <Button variant="secondary" className="hidden sm:inline-flex">
-                  <Hash size={16} /> {me.nickname} {me.role !== "student" ? `(${me.role})` : ""}
-                </Button>
-                <Button variant="outline" onClick={onLogout}><LogOut size={16}/>로그아웃</Button>
-              </>
-            ) : (
-              <>
-                <Button variant="outline" onClick={onLogin}><LogIn size={16}/>로그인</Button>
-                <Button variant="secondary" onClick={onRegister}><UserPlus size={16}/>회원가입</Button>
-              </>
-            )}
-          </div>
-        </div>
-
-        <div className="mt-3 grid gap-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              variant={sort === "latest" ? "default" : "outline"}
-              size="sm"
-              onClick={() => setSort("latest")}
-              title="최신순"
-            >
-              <Clock size={16}/> 최신
-            </Button>
-            <Button
-              variant={sort === "hot" ? "default" : "outline"}
-              size="sm"
-              onClick={() => setSort("hot")}
-              title="인기순"
-            >
-              <Flame size={16}/> 인기
-            </Button>
-
-            <div className="h-6 w-px bg-zinc-200 mx-1" />
-
-            {["all","free","notice","question","lost","market"].map((c) => (
-              <Button
-                key={c}
-                variant={category === c ? "secondary" : "outline"}
-                size="sm"
-                onClick={() => setCategory(c)}
-              >
-                {c}
-              </Button>
-            ))}
-          </div>
-
-          <div className="flex items-center gap-2">
-            <div className="relative w-full">
-              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
-              <Input className="pl-9" value={q} onChange={(e) => setQ(e.target.value)} placeholder="검색 (제목/본문)" />
-            </div>
-          </div>
+          </Card>
         </div>
       </div>
-    </div>
+
+      <AuthModal open={openAuth} tab={authTab} setTab={setAuthTab} onClose={()=>setOpenAuth(false)} auth={auth} />
+      <EditorModal
+        open={openEditor}
+        onClose={()=>setOpenEditor(false)}
+        toast={toast}
+        auth={auth}
+        editTarget={editTarget}
+        onSaved={async (postId)=>{
+          setOpenEditor(false);
+          // 저장 후 즉시 반영: 상세 fetch 후 목록 갱신
+          try{
+            const r = await apiFetch(`/posts/${postId}`, { token: token || null });
+            setPosts(prev => {
+              const exist = prev.some(p=>p.id===postId);
+              if (exist) return prev.map(p=>p.id===postId ? r.post : p);
+              return [r.post, ...prev];
+            });
+            location.hash = `#/post/${postId}`;
+          }catch{}
+        }}
+      />
+    </>
   );
 }
 
-// ===================== PostCard =====================
-function PostCard({ post, onOpen, onLike, onReport }) {
+/** ================== POST DETAIL ================== **/
+function PostPage({auth, toast, postId}){
+  const { token, user } = auth;
+  const [post, setPost] = useState(null);
+  const [comments, setComments] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const [openEditor, setOpenEditor] = useState(false);
+  const [openReport, setOpenReport] = useState(false);
+  const [commentText, setCommentText] = useState("");
+  const [commentAnon, setCommentAnon] = useState(false);
+
+  async function load(){
+    setLoading(true);
+    try{
+      const r = await apiFetch(`/posts/${postId}`, { token: token || null });
+      const c = await apiFetch(`/posts/${postId}/comments`, { token: token || null });
+      setPost(r.post);
+      setComments(c.comments || []);
+    }catch(e){
+      toast.push({title:"불러오기 실패", message:e.message, kind:"err"});
+      setPost(null);
+    }finally{
+      setLoading(false);
+    }
+  }
+
+  useEffect(()=>{ load(); /* eslint-disable-next-line */ }, [postId]);
+
+  // realtime comment updates
+  useRealtime({
+    enabled: true,
+    toast,
+    onEvent: async (ev)=>{
+      if (!ev?.kind) return;
+      if (ev.kind==="post_updated" && ev.postId===postId) load();
+      if (ev.kind==="post_removed" && ev.postId===postId){
+        toast.push({title:"삭제됨", message:"이 게시물은 제거됐어요", kind:"err"});
+        location.hash = "#/";
+      }
+      if (ev.kind==="comment_created" && ev.postId===postId){
+        // 댓글 새로고침
+        try{
+          const c = await apiFetch(`/posts/${postId}/comments`, { token: token || null });
+          setComments(c.comments || []);
+        }catch{}
+      }
+    }
+  });
+
+  async function like(targetType, targetId){
+    if (!token){
+      toast.push({title:"로그인 필요", message:"좋아요는 로그인 후 가능해요", kind:"info"});
+      return;
+    }
+    try{
+      await apiFetch("/likes/toggle", { method:"POST", token, body:{targetType, targetId} });
+      // 안전하게 새로고침 (정확 카운트)
+      await load();
+    }catch(e){
+      toast.push({title:"좋아요 실패", message:e.message, kind:"err"});
+    }
+  }
+
+  async function report(targetType, targetId){
+    if (!token){
+      toast.push({title:"로그인 필요", message:"신고는 로그인 후 가능해요", kind:"info"});
+      return;
+    }
+    const reason = prompt("신고 사유(짧게) ex) 스팸/욕설/도배/기타") || "";
+    if (!reason.trim()) return;
+    const detail = prompt("추가 설명(선택)") || "";
+    try{
+      await apiFetch("/reports", { method:"POST", token, body:{targetType, targetId, reason, detail} });
+      toast.push({title:"신고 접수", message:"관리자가 확인할게요", kind:"ok"});
+    }catch(e){
+      toast.push({title:"신고 실패", message:e.message, kind:"err"});
+    }
+  }
+
+  async function addComment(){
+    if (!token){
+      toast.push({title:"로그인 필요", message:"댓글 작성은 로그인 후 가능해요", kind:"info"});
+      return;
+    }
+    const bodyMd = commentText.trim();
+    if (!bodyMd){
+      toast.push({title:"댓글 내용 없음", message:"내용을 입력해줘요", kind:"err"});
+      return;
+    }
+    try{
+      await apiFetch(`/posts/${postId}/comments`, {
+        method:"POST",
+        token,
+        body:{ bodyMd, anonymous: commentAnon }
+      });
+      setCommentText("");
+      toast.push({title:"댓글 등록", message:"등록됐어요", kind:"ok"});
+      await load();
+    }catch(e){
+      toast.push({title:"댓글 실패", message:e.message, kind:"err"});
+    }
+  }
+
+  async function deletePost(){
+    if (!token || !post?.canDelete){
+      toast.push({title:"권한 없음", message:"관리자만 삭제 가능", kind:"err"});
+      return;
+    }
+    if (!confirm("정말 삭제할까요? (관리자 삭제)")) return;
+    try{
+      await apiFetch(`/posts/${postId}`, { method:"DELETE", token });
+      toast.push({title:"삭제 완료", message:"게시물이 제거됐어요", kind:"ok"});
+      location.hash = "#/";
+    }catch(e){
+      toast.push({title:"삭제 실패", message:e.message, kind:"err"});
+    }
+  }
+
+  if (loading){
+    return (
+      <div className="grid">
+        <div className="col">
+          <Card title="게시물" right={<Button variant="ghost" onClick={()=>location.hash="#/"}>← 목록</Button>}>
+            <div className="muted small">불러오는 중...</div>
+          </Card>
+        </div>
+        <div className="col">
+          <Card title="내 계정">
+            <div className="muted small">...</div>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
+  if (!post){
+    return (
+      <div className="grid">
+        <div className="col">
+          <Card title="게시물" right={<Button variant="ghost" onClick={()=>location.hash="#/"}>← 목록</Button>}>
+            <div className="muted small">게시물을 찾을 수 없어요.</div>
+          </Card>
+        </div>
+        <div className="col">
+          <Card title="내 계정">
+            <div className="muted small">...</div>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <motion.div
-      layout
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="cursor-pointer"
-      onClick={onOpen}
-    >
-      <Card className="hover:shadow-soft transition">
-        <CardHeader>
-          <div className="flex items-start justify-between gap-3">
-            <div className="grid gap-1">
-              <div className="text-base font-extrabold">{post.title}</div>
-              <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-600">
-                <Badge>{post.category}</Badge>
-                <span className="font-bold">{post.authorName}</span>
-                {post.anonymous ? <Badge className="bg-zinc-900 text-white">익명</Badge> : null}
-                <span className="text-zinc-400">·</span>
-                <span>{formatTime(post.createdAt)}</span>
-                {post.pinned ? <Badge className="bg-amber-100 text-amber-800">고정</Badge> : null}
+    <>
+      <div className="grid">
+        <div className="col">
+          <Card
+            title="게시물"
+            right={
+              <div className="row">
+                <Button variant="ghost" onClick={()=>location.hash="#/"}>← 목록</Button>
+                <Button size="sm" onClick={()=>like("post", postId)}><Icon name="heart" size={16}/> {post.likes||0}</Button>
+                <Button size="sm" variant="ghost" onClick={()=>report("post", postId)}><Icon name="flag" size={16}/> 신고</Button>
+                {post.canEdit && <Button size="sm" variant="ghost" onClick={()=>setOpenEditor(true)}><Icon name="edit" size={16}/> 수정</Button>}
+                {post.canDelete && <Button size="sm" variant="danger" onClick={deletePost}><Icon name="trash" size={16}/> 삭제</Button>}
+              </div>
+            }
+          >
+            <div className="row" style={{justifyContent:"space-between"}}>
+              <div className="row">
+                <span className="badge">
+                  <span className="badge-dot" style={{background:"rgba(167,139,250,.9)", boxShadow:"0 0 0 3px rgba(167,139,250,.14)"}}></span>
+                  {post.category}
+                </span>
+                {post.pinned && <span className="badge"><Icon name="bolt" size={14}/> 고정</span>}
+                <span className="badge"><Icon name="user" size={14}/> {post.authorName}{post.anonymous ? " (익명)" : ""}</span>
+              </div>
+              <div className="small muted">{fmtTime(post.createdAt)} · 업데이트 {fmtTime(post.updatedAt)}</div>
+            </div>
+
+            <h2 style={{margin:"12px 0 8px", fontSize:20, lineHeight:1.2}}>{post.title}</h2>
+
+            <div className="hr"></div>
+
+            <div className="md" dangerouslySetInnerHTML={{__html: renderMarkdown(post.bodyMd)}} />
+
+            <div className="hr"></div>
+
+            <div className="row" style={{justifyContent:"space-between"}}>
+              <div className="muted small">
+                댓글 {post.comments || 0}
+              </div>
+              <div className="row">
+                <Button size="sm" variant="ghost" onClick={()=>{
+                  const url = prompt("이미지/동영상 링크를 붙여넣기") || "";
+                  if (!url.trim()) return;
+                  const md = `![](${url.trim()})`;
+                  navigator.clipboard?.writeText(md);
+                  toast.push({title:"복사됨", message:md, kind:"ok"});
+                }}>
+                  <Icon name="image" size={16}/> 링크→마크다운
+                </Button>
               </div>
             </div>
-          </div>
-        </CardHeader>
+          </Card>
 
-        <CardContent>
-          <div className="line-clamp-3 text-sm text-zinc-700">
-            {post.bodyMd?.slice(0, 180) || ""}
-            {(post.bodyMd?.length || 0) > 180 ? "…" : ""}
-          </div>
+          <Card title="댓글">
+            {!auth.token ? (
+              <div className="small muted">댓글 작성은 로그인 후 가능해요.</div>
+            ) : (
+              <div className="col">
+                <Textarea value={commentText} onChange={(e)=>setCommentText(e.target.value)} placeholder="댓글을 마크다운으로 작성할 수 있어요." />
+                <div className="row" style={{justifyContent:"space-between"}}>
+                  <label className="row small muted" style={{gap:8}}>
+                    <input type="checkbox" checked={commentAnon} onChange={(e)=>setCommentAnon(e.target.checked)} />
+                    익명으로 작성
+                  </label>
+                  <Button variant="primary" onClick={addComment}>
+                    <Icon name="plus" /> 댓글 등록
+                  </Button>
+                </div>
+              </div>
+            )}
 
-          <div className="mt-3 flex items-center justify-between">
-            <div className="flex gap-2">
-              <Button variant="secondary" size="sm" onClick={(e) => { e.stopPropagation(); onLike(); }}>
-                <Heart size={16}/> {post.likes || 0}
-              </Button>
-              <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); onReport(); }}>
-                <ShieldAlert size={16}/> 신고
-              </Button>
+            <div className="hr"></div>
+
+            <div className="col" style={{gap:10}}>
+              {comments.map(c=>(
+                <motion.div key={c.id} className="post" initial={{opacity:0, y:6}} animate={{opacity:1, y:0}}>
+                  <div className="spread">
+                    <div className="post-meta">
+                      <span><Icon name="user" size={14}/> {c.authorName}{c.anonymous ? " (익명)" : ""}</span>
+                      <span>·</span>
+                      <span className="small muted">{fmtTime(c.createdAt)}</span>
+                    </div>
+                    <div className="row">
+                      <Button size="sm" onClick={()=>like("comment", c.id)}>
+                        <Icon name="heart" size={16}/> 좋아요
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={()=>report("comment", c.id)}>
+                        <Icon name="flag" size={16}/> 신고
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="md" dangerouslySetInnerHTML={{__html: renderMarkdown(c.bodyMd)}} />
+                </motion.div>
+              ))}
+              {!comments.length && <div className="small muted center">아직 댓글이 없어요</div>}
             </div>
-            <div className="text-xs text-zinc-600 flex items-center gap-1">
-              <MessageCircle size={16}/> {post.comments || 0}
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-    </motion.div>
+          </Card>
+        </div>
+
+        <div className="col">
+          <Card title="내 계정">
+            {!auth.token ? (
+              <div className="col">
+                <div className="muted small">읽기는 누구나 · 쓰기는 로그인 필요</div>
+                <Button variant="primary" onClick={()=>{ location.hash="#/"; }}>
+                  <Icon name="logIn" /> 피드로 이동해서 로그인
+                </Button>
+              </div>
+            ) : (
+              <div className="col">
+                <div style={{fontSize:14, fontWeight:700}}>{user?.nickname}</div>
+                <div className="small muted">{user?.studentId ? `학번: ${user.studentId}` : "학번 미등록"} · role: {user?.role}</div>
+                <div className="hr"></div>
+                <Button variant="ghost" onClick={auth.logout}>
+                  <Icon name="logOut" /> 로그아웃
+                </Button>
+              </div>
+            )}
+          </Card>
+
+          <Card title="마크다운 미리보기">
+            <div className="small muted">댓글/글 작성 시 이렇게 보여요.</div>
+            <div className="hr"></div>
+            <div className="md" dangerouslySetInnerHTML={{__html: renderMarkdown(
+              "# 제목\n## 소제목\n**굵게** / `코드`\n\n> 인용문\n\n![](https://placehold.co/900x420/png)\n"
+            )}} />
+          </Card>
+        </div>
+      </div>
+
+      <EditorModal
+        open={openEditor}
+        onClose={()=>setOpenEditor(false)}
+        toast={toast}
+        auth={auth}
+        editTarget={post}
+        onSaved={async ()=>{ setOpenEditor(false); await load(); }}
+      />
+    </>
   );
 }
 
-// ===================== AuthModal =====================
-function AuthModal({ open, onClose, tab, setTab, onLogin, onRegister }) {
+/** ================== AUTH MODAL ================== **/
+function AuthModal({open, tab, setTab, onClose, auth}){
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
-
   const [nickname, setNickname] = useState("");
   const [studentId, setStudentId] = useState("");
-  const [password2, setPassword2] = useState("");
+  const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    if (!open) {
-      setIdentifier(""); setPassword("");
-      setNickname(""); setStudentId(""); setPassword2("");
+  useEffect(()=>{ if(open){ setBusy(false); } }, [open]);
+
+  async function doLogin(){
+    setBusy(true);
+    try{
+      await auth.login(identifier, password);
+      onClose();
+    }finally{
+      setBusy(false);
     }
-  }, [open]);
+  }
+  async function doRegister(){
+    setBusy(true);
+    try{
+      await auth.register(nickname, password, studentId || "");
+      setTab("login");
+    }finally{
+      setBusy(false);
+    }
+  }
+
+  const tabs = (
+    <div className="row">
+      <Button size="sm" variant={tab==="login" ? "primary":"ghost"} onClick={()=>setTab("login")}>로그인</Button>
+      <Button size="sm" variant={tab==="register" ? "primary":"ghost"} onClick={()=>setTab("register")}>회원가입</Button>
+    </div>
+  );
 
   return (
     <Modal
       open={open}
+      title="계정"
       onClose={onClose}
-      title={tab === "login" ? "로그인" : "회원가입"}
-      footer={
-        <div className="flex items-center justify-between">
-          <div className="text-xs text-zinc-600">
-            {tab === "login" ? (
-              <button className="underline" onClick={() => setTab("register")}>회원가입으로</button>
-            ) : (
-              <button className="underline" onClick={() => setTab("login")}>로그인으로</button>
-            )}
-          </div>
-          <Button
-            onClick={async () => {
-              try {
-                if (tab === "login") {
-                  await onLogin({ identifier, password });
-                } else {
-                  if (!nickname.trim()) return alert("닉네임 입력");
-                  if ((password2 || "").length < 4) return alert("비번 4자 이상");
-                  await onRegister({ nickname: nickname.trim(), studentId: studentId.trim(), password: password2 });
-                }
-              } catch (e) {
-                alert(e.message || "실패");
-              }
-            }}
-          >
-            {tab === "login" ? <><LogIn size={16}/> 로그인</> : <><UserPlus size={16}/> 가입</>}
-          </Button>
-        </div>
-      }
+      footer={null}
     >
-      {tab === "login" ? (
-        <div className="grid gap-3">
-          <div className="grid gap-2">
-            <label className="text-xs font-bold text-zinc-700">닉네임 또는 학번</label>
-            <Input value={identifier} onChange={(e) => setIdentifier(e.target.value)} placeholder="예: yekong0728 또는 20251234" />
+      {tabs}
+      <div className="hr"></div>
+
+      {tab==="login" ? (
+        <div className="col">
+          <div className="small muted">
+            닉네임 또는 학번 + 비밀번호로 로그인
           </div>
-          <div className="grid gap-2">
-            <label className="text-xs font-bold text-zinc-700">비밀번호</label>
-            <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="비밀번호" />
-          </div>
-          <div className="text-xs text-zinc-600">
-            - 읽기는 누구나 가능, 쓰기는 로그인 필요<br/>
-            - 익명 토글은 글/댓글에서 가능
+          <Input value={identifier} onChange={(e)=>setIdentifier(e.target.value)} placeholder="닉네임 또는 학번" />
+          <Input type="password" value={password} onChange={(e)=>setPassword(e.target.value)} placeholder="비밀번호" />
+          <div className="row" style={{justifyContent:"flex-end"}}>
+            <Button variant="primary" disabled={busy} onClick={doLogin}>
+              <Icon name="logIn" /> 로그인
+            </Button>
           </div>
         </div>
       ) : (
-        <div className="grid gap-3">
-          <div className="grid gap-2">
-            <label className="text-xs font-bold text-zinc-700">닉네임(2~16)</label>
-            <Input value={nickname} onChange={(e) => setNickname(e.target.value)} placeholder="한/영/숫자/_" />
+        <div className="col">
+          <div className="small muted">
+            닉네임(2~16, 영문/숫자/한글/_) + 비밀번호(4+) + 학번(선택)
           </div>
-          <div className="grid gap-2">
-            <label className="text-xs font-bold text-zinc-700">학번(옵션)</label>
-            <Input value={studentId} onChange={(e) => setStudentId(e.target.value)} placeholder="없으면 비워도 됨" />
-          </div>
-          <div className="grid gap-2">
-            <label className="text-xs font-bold text-zinc-700">비밀번호(4자 이상)</label>
-            <Input type="password" value={password2} onChange={(e) => setPassword2(e.target.value)} placeholder="비밀번호" />
-          </div>
-          <div className="text-xs text-zinc-600">
-            - 로그인은 “닉네임 또는 학번 + 비밀번호”<br/>
-            - 운영 중엔 비번을 더 강하게 제한하는 걸 추천
+          <Input value={nickname} onChange={(e)=>setNickname(e.target.value)} placeholder="닉네임" />
+          <Input type="password" value={password} onChange={(e)=>setPassword(e.target.value)} placeholder="비밀번호" />
+          <Input value={studentId} onChange={(e)=>setStudentId(e.target.value)} placeholder="학번 (옵션)" />
+          <div className="row" style={{justifyContent:"flex-end"}}>
+            <Button variant="primary" disabled={busy} onClick={doRegister}>
+              <Icon name="user" /> 가입하기
+            </Button>
           </div>
         </div>
       )}
@@ -1072,5 +1068,174 @@ function AuthModal({ open, onClose, tab, setTab, onLogin, onRegister }) {
   );
 }
 
-// ===================== Mount =====================
-createRoot(document.getElementById("root")).render(<App />);
+/** ================== EDITOR MODAL ================== **/
+function EditorModal({open, onClose, toast, auth, editTarget, onSaved}){
+  const isEdit = Boolean(editTarget?.id);
+  const [category, setCategory] = useState(editTarget?.category || "free");
+  const [title, setTitle] = useState(editTarget?.title || "");
+  const [bodyMd, setBodyMd] = useState(editTarget?.bodyMd || "");
+  const [anonymous, setAnonymous] = useState(Boolean(editTarget?.anonymous));
+  const [tab, setTab] = useState("write"); // write|preview
+  const [busy, setBusy] = useState(false);
+
+  useEffect(()=>{
+    if (!open) return;
+    setCategory(editTarget?.category || "free");
+    setTitle(editTarget?.title || "");
+    setBodyMd(editTarget?.bodyMd || "");
+    setAnonymous(Boolean(editTarget?.anonymous));
+    setTab("write");
+    setBusy(false);
+  }, [open, editTarget?.id]);
+
+  async function save(){
+    if (!auth.token){
+      toast.push({title:"로그인 필요", message:"작성은 로그인 후 가능해요", kind:"err"});
+      return;
+    }
+    const t = title.trim();
+    const b = bodyMd.trim();
+    if (!t || !b){
+      toast.push({title:"필수", message:"제목/내용을 입력해줘요", kind:"err"});
+      return;
+    }
+    setBusy(true);
+    try{
+      if (!isEdit){
+        const r = await apiFetch("/posts", { method:"POST", token:auth.token, body:{category, title:t, bodyMd:b, anonymous} });
+        toast.push({title:"등록 완료", message:"피드에 반영됐어요", kind:"ok"});
+        onSaved?.(r.postId);
+      }else{
+        await apiFetch(`/posts/${editTarget.id}`, { method:"PATCH", token:auth.token, body:{title:t, bodyMd:b, anonymous} });
+        toast.push({title:"수정 완료", message:"변경사항이 반영됐어요", kind:"ok"});
+        onSaved?.(editTarget.id);
+      }
+    }catch(e){
+      toast.push({title:"저장 실패", message:e.message, kind:"err"});
+    }finally{
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      open={open}
+      title={isEdit ? "글 수정" : "새 글 작성"}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>닫기</Button>
+          <Button variant="primary" disabled={busy} onClick={save}>
+            <Icon name="spark" /> {isEdit ? "수정 저장" : "게시"}
+          </Button>
+        </>
+      }
+    >
+      <div className="row" style={{justifyContent:"space-between"}}>
+        <div className="row">
+          {!isEdit && (
+            <Select value={category} onChange={(e)=>setCategory(e.target.value)}>
+              <option value="free">자유</option>
+              <option value="qna">Q&A</option>
+              <option value="notice">공지(운영)</option>
+            </Select>
+          )}
+          <label className="row small muted" style={{gap:8}}>
+            <input type="checkbox" checked={anonymous} onChange={(e)=>setAnonymous(e.target.checked)} />
+            익명
+          </label>
+        </div>
+
+        <div className="row">
+          <Button size="sm" variant={tab==="write" ? "primary":"ghost"} onClick={()=>setTab("write")}>작성</Button>
+          <Button size="sm" variant={tab==="preview" ? "primary":"ghost"} onClick={()=>setTab("preview")}>미리보기</Button>
+        </div>
+      </div>
+
+      <div className="hr"></div>
+
+      <div className="col">
+        <Input value={title} onChange={(e)=>setTitle(e.target.value)} placeholder="제목" />
+        {tab==="write" ? (
+          <>
+            <Textarea value={bodyMd} onChange={(e)=>setBodyMd(e.target.value)} placeholder="내용(마크다운 지원)\n\n예) ![](이미지링크)\n예) ```\n코드\n```" />
+            <div className="row" style={{justifyContent:"space-between"}}>
+              <div className="small muted">
+                이미지/동영상은 업로드 후 링크를 받아 <span className="kbd">![](링크)</span>로 붙여넣기
+              </div>
+              <Button size="sm" variant="ghost" onClick={()=>{
+                const url = prompt("이미지/동영상 링크를 붙여넣기") || "";
+                if (!url.trim()) return;
+                const md = `![](${url.trim()})`;
+                setBodyMd(v => (v ? (v+"\n\n"+md) : md));
+                toast.push({title:"삽입됨", message:md, kind:"ok"});
+              }}>
+                <Icon name="image" size={16}/> 링크 삽입
+              </Button>
+            </div>
+          </>
+        ) : (
+          <div className="post">
+            <div className="md" dangerouslySetInnerHTML={{__html: renderMarkdown(bodyMd)}} />
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+/** ================== APP SHELL ================== **/
+function App(){
+  const toast = useToasts();
+  const auth = useAuth(toast);
+  const route = useRoute();
+
+  return (
+    <>
+      <div className="topbar">
+        <div className="container topbar-inner">
+          <div className="brand" onClick={()=>location.hash="#/"} role="button" tabIndex={0}>
+            <div className="logo" aria-hidden="true">
+              <Icon name="spark" />
+            </div>
+            <div>
+              <h1>SRT Community</h1>
+              <span className="sub">읽기는 누구나 · 쓰기는 로그인 필요</span>
+            </div>
+          </div>
+
+          <div className="row">
+            {auth.user ? (
+              <>
+                <span className="badge">
+                  <span className="badge-dot"></span>
+                  {auth.user.nickname} · {auth.user.role}
+                </span>
+                <Button className="pill" variant="ghost" onClick={auth.logout}>
+                  <Icon name="logOut" /> 로그아웃
+                </Button>
+              </>
+            ) : (
+              <span className="badge">
+                <span className="badge-dot" style={{background:"rgba(245,158,11,.95)"}}></span>
+                게스트
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="container">
+        {route.name==="feed" ? (
+          <FeedPage auth={auth} toast={toast} />
+        ) : (
+          <PostPage auth={auth} toast={toast} postId={route.id} />
+        )}
+      </div>
+
+      {toast.node}
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
