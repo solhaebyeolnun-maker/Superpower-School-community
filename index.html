@@ -1,16 +1,32 @@
 <!doctype html>
 <html lang="ko">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="color-scheme" content="light dark" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="color-scheme" content="dark light" />
   <title>SRT Community</title>
+
+  <!-- Tailwind CDN (정적 배포에서 가장 편하고, shadcn 느낌 내기 좋음) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Markdown -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+
+  <!-- Icons (lucide) -->
+  <script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.js"></script>
+
+  <!-- (선택) 폰트 -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@400;600;700&display=swap" rel="stylesheet">
+
   <link rel="stylesheet" href="./styles.css" />
 </head>
-<body>
-  <div id="root"></div>
 
-  <!-- 빌드 없이 ESM 모듈로 실행 -->
-  <script type="module" src="./app.js"></script>
+<body class="min-h-screen bg-[radial-gradient(1200px_700px_at_20%_0%,rgba(99,102,241,0.12),transparent_60%),radial-gradient(1000px_600px_at_90%_10%,rgba(236,72,153,0.10),transparent_60%),radial-gradient(1100px_700px_at_50%_100%,rgba(34,197,94,0.08),transparent_60%)]">
+  <div id="app" class="min-h-screen"></div>
+
+  <script src="./app.js"></script>
 </body>
 </html>
