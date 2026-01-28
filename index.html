@@ -8,11 +8,63 @@
   <meta name="description" content="읽기는 누구나 · 쓰기는 로그인 필요" />
   <link rel="icon" href="./favicon.ico" />
   <link rel="stylesheet" href="./styles.css" />
+
   <!-- Markdown -->
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
 </head>
 <body>
+  <!-- Boot / Loading Overlay -->
+  <div id="boot" class="boot" aria-hidden="false">
+    <div class="boot__bg">
+      <div class="boot__blob boot__blob--a"></div>
+      <div class="boot__blob boot__blob--b"></div>
+      <div class="boot__grid"></div>
+    </div>
+
+    <div class="boot__card" role="status" aria-live="polite">
+      <div class="boot__brand">
+        <div class="boot__logo">S</div>
+        <div>
+          <div class="boot__title">SRT Community</div>
+          <div class="boot__sub">베타 로딩중…</div>
+        </div>
+      </div>
+
+      <div class="boot__wheel" aria-hidden="true"></div>
+
+      <div class="boot__dots">
+        <span>로딩 중</span>
+        <span class="dots" aria-hidden="true">
+          <i></i><i></i><i></i>
+        </span>
+      </div>
+
+      <div class="boot__bar">
+        <div class="boot__barFill" id="bootBarFill"></div>
+        <div class="boot__barBubbles" aria-hidden="true">
+          <span></span><span></span><span></span>
+        </div>
+        <div class="boot__pct" id="bootPct">0%</div>
+      </div>
+
+      <div class="boot__step" id="bootStep">초기화 중…</div>
+
+      <div class="boot__steps">
+        <div class="boot__stepsTitle">진짜 로딩 + 가짜 로딩(감성)</div>
+        <ul id="bootStepsList">
+          <li>테마/설정 불러오는 중</li>
+          <li>세션 복원 시도</li>
+          <li>피드 데이터 요청</li>
+          <li>실시간 연결 준비</li>
+          <li>UI 렌더링</li>
+          <li>…뭔가 멋진걸 하는 중</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Background (main) -->
   <div class="bg">
     <div class="bg__blob bg__blob--a"></div>
     <div class="bg__blob bg__blob--b"></div>
@@ -21,7 +73,7 @@
 
   <header class="topbar">
     <div class="container topbar__inner">
-      <div class="brand">
+      <div class="brand" id="homeBtn" role="button" tabindex="0" aria-label="홈으로">
         <div class="brand__logo" aria-hidden="true">S</div>
         <div class="brand__text">
           <div class="brand__title">SRT Community</div>
@@ -32,12 +84,12 @@
       <div class="topbar__right">
         <div class="rt" title="실시간 상태">
           <span class="rt__dot" id="rtDot" aria-hidden="true"></span>
-          <span class="rt__label" id="rtLabel">실시간: 연결 시도중</span>
+          <span class="rt__label" id="rtLabel">실시간: 연결 준비중</span>
           <span class="rt__meta" id="rtMeta">—</span>
         </div>
 
         <button class="btn btn--ghost" id="themeBtn" type="button" aria-label="테마 전환">
-          <span class="icon">🌓</span>
+          <span class="icon" aria-hidden="true">🌓</span>
           <span class="hide-sm">테마</span>
         </button>
 
@@ -71,6 +123,17 @@
             <select id="sortSel" class="select__box">
               <option value="latest">최신</option>
               <option value="hot">핫(Hot)</option>
+              <option value="comments">댓글 많은</option>
+              <option value="likes">좋아요 많은</option>
+            </select>
+          </div>
+
+          <div class="select" id="tabSelWrap">
+            <label class="select__label" for="tabSel">보기</label>
+            <select id="tabSel" class="select__box">
+              <option value="feed">전체 피드</option>
+              <option value="bookmarks">북마크</option>
+              <option value="mine">내 글</option>
             </select>
           </div>
         </div>
@@ -79,7 +142,7 @@
       <div class="toolbar__row toolbar__row--sub">
         <div class="hint">
           <span class="badge">TIP</span>
-          <span>이미지/동영상은 외부 링크를 Markdown으로 붙여넣기: <code>![](링크)</code></span>
+          <span>이미지/동영상은 링크를 Markdown으로: <code>![](링크)</code> / 제목은 <code># ~ ######</code> 지원</span>
         </div>
 
         <div class="toolbar__subright">
@@ -116,10 +179,17 @@
       <div class="postTop">
         <button class="btn btn--ghost" id="backBtn" type="button">← 목록</button>
         <div class="postTop__right">
+          <button class="btn btn--ghost" id="postBookmarkBtn" type="button">⭐ 북마크</button>
           <button class="btn btn--ghost" id="postLikeBtn" type="button">👍 좋아요</button>
           <button class="btn btn--ghost" id="postReportBtn" type="button">🚩 신고</button>
+
+          <!-- 본인 or 어드민이면 표시 -->
           <button class="btn btn--ghost is-hidden" id="postEditBtn" type="button">✏️ 수정</button>
-          <button class="btn btn--danger is-hidden" id="postDeleteBtn" type="button">🗑️ 삭제(관리자)</button>
+          <button class="btn btn--danger is-hidden" id="postDeleteBtn" type="button">🗑️ 삭제</button>
+
+          <!-- 어드민 기능(핀/신고) - API 준비되면 노출 -->
+          <button class="btn btn--ghost is-hidden" id="postPinBtn" type="button">📌 고정</button>
+          <button class="btn btn--ghost is-hidden" id="adminReportsBtn" type="button">🧾 신고함</button>
         </div>
       </div>
 
@@ -153,9 +223,10 @@
             <div class="spacer"></div>
             <button class="btn btn--ghost" id="commentPreviewBtn" type="button">미리보기</button>
           </div>
-          <textarea id="commentInput" class="textarea" rows="3" placeholder="Markdown 지원: **굵게**, # 제목, > 인용, ![](이미지링크)"></textarea>
+          <textarea id="commentInput" class="textarea" rows="3"
+            placeholder="Markdown 지원: #~######, **굵게**, > 인용, ```코드```, 테이블, 체크리스트, ![](이미지링크)"></textarea>
           <div class="row">
-            <div class="muted">Shift+Enter 줄바꿈 / Enter 전송</div>
+            <div class="muted">Shift+Enter 줄바꿈 / Ctrl+Enter 등록</div>
             <div class="spacer"></div>
             <button class="btn btn--primary" id="commentSendBtn" type="button">댓글 등록</button>
           </div>
@@ -176,12 +247,6 @@
   <!-- Toast -->
   <div id="toastRoot" class="toastRoot" aria-live="polite" aria-atomic="true"></div>
 
-  <!-- Lucide Icons (global) -->
-  <script defer src="https://unpkg.com/lucide@latest"></script>
-
   <script defer src="./app.js"></script>
-</body>
-</html>
-
 </body>
 </html>
