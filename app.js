@@ -1,1817 +1,1151 @@
-/* ===============================
+/* ===========================
    SRT Community - app.js
-   =============================== */
+   Static (GitHub Pages) + Cloudflare Worker API + D1
+=========================== */
 
-/** ✅ API BASE */
 const API_BASE = "https://srt-community-api.yekong0728.workers.dev";
 
-/** LocalStorage keys */
+/* ---------- DOM helpers ---------- */
+const $ = (sel, el=document) => el.querySelector(sel);
+const $$ = (sel, el=document) => Array.from(el.querySelectorAll(sel));
+const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+
+/* ---------- State / Storage ---------- */
 const LS = {
-  token: "srt_token",
-  user: "srt_user",
-  theme: "srt_theme",
-  bookmarks: "srt_bookmarks_v1", // { [postId]: {id,title,category,createdAt,pinned} }
-  lastSort: "srt_sort",
-  lastCat: "srt_cat",
-  lastQ: "srt_q",
+  theme: "srt.theme",
+  token: "srt.token",
+  me: "srt.me",
+  bookmarks: "srt.bookmarks" // { [postId]: postSummary }
 };
 
-const el = (id) => document.getElementById(id);
-const qs = (sel, root = document) => root.querySelector(sel);
-const qsa = (sel, root = document) => Array.from(root.querySelectorAll(sel));
-
-/** UI nodes */
-const $boot = el("boot");
-const $bootBar = el("bootBar");
-const $bootPct = el("bootPct");
-const $bootTask = el("bootTask");
-
-const $rtDot = el("rtDot");
-const $rtLabel = el("rtLabel");
-const $rtMeta = el("rtMeta");
-
-const $themeBtn = el("themeBtn");
-const $bookmarksBtn = el("bookmarksBtn");
-
-const $homeBtn = el("homeBtn");
-const $loginBtn = el("loginBtn");
-const $userBox = el("userBox");
-
-const $segFeed = el("segFeed");
-const $segMy = el("segMy");
-const $segAdmin = el("segAdmin");
-const $meMini = el("meMini");
-
-const $banner = el("banner");
-
-const $feedView = el("feedView");
-const $postView = el("postView");
-const $myView = el("myView");
-const $adminView = el("adminView");
-
-const $list = el("list");
-const $loadMoreBtn = el("loadMoreBtn");
-const $loadMoreMeta = el("loadMoreMeta");
-const $pillCount = el("pillCount");
-const $feedTitle = el("feedTitle");
-const $feedSub = el("feedSub");
-
-const $qInput = el("qInput");
-const $searchBtn = el("searchBtn");
-const $refreshBtn = el("refreshBtn");
-const $sortSel = el("sortSel");
-const $newPostBtn = el("newPostBtn");
-const $fabBtn = el("fabBtn");
-
-const $backBtn = el("backBtn");
-const $postCat = el("postCat");
-const $postAuthor = el("postAuthor");
-const $postTime = el("postTime");
-const $postTitle = el("postTitle");
-const $postBody = el("postBody");
-const $postLikeBtn = el("postLikeBtn");
-const $postReportBtn = el("postReportBtn");
-const $postEditBtn = el("postEditBtn");
-const $postDeleteBtn = el("postDeleteBtn");
-const $postPinBtn = el("postPinBtn");
-const $postBookmarkBtn = el("postBookmarkBtn");
-const $postLikeCount = el("postLikeCount");
-const $postCommentCount = el("postCommentCount");
-
-const $commentMeta = el("commentMeta");
-const $commentAnon = el("commentAnon");
-const $commentInput = el("commentInput");
-const $commentPreviewBtn = el("commentPreviewBtn");
-const $commentPreview = el("commentPreview");
-const $commentSendBtn = el("commentSendBtn");
-const $commentList = el("commentList");
-
-const $modalRoot = el("modalRoot");
-const $toastRoot = el("toastRoot");
-
-/** My view */
-const $myPostsBtn = el("myPostsBtn");
-const $myCommentsBtn = el("myCommentsBtn");
-const $myReloadBtn = el("myReloadBtn");
-const $myList = el("myList");
-
-/** Admin view */
-const $reportStatusSel = el("reportStatusSel");
-const $adminLoadReportsBtn = el("adminLoadReportsBtn");
-const $adminReloadBtn = el("adminReloadBtn");
-const $reportList = el("reportList");
-
-/** State */
 const state = {
-  cat: localStorage.getItem(LS.lastCat) || "all",
-  q: localStorage.getItem(LS.lastQ) || "",
-  sort: localStorage.getItem(LS.lastSort) || "latest",
+  category: "all",
+  sort: "latest",
+  q: "",
   cursor: "",
   loading: false,
-  posts: [],
-  currentPost: null,
-  comments: [],
-  ws: null,
-  wsConnected: false,
+  list: [],
   me: null,
-  view: "feed", // feed|post|my|admin
-  myTab: "posts", // posts|comments
+  token: localStorage.getItem(LS.token) || "",
+  bookmarks: loadBookmarks(),
+  ws: { ok:false, lastTs:0 }
 };
 
-/* -----------------------
-   Markdown setup
------------------------- */
-function setupMarkdown() {
-  if (window.marked) {
-    marked.setOptions({
-      gfm: true,
-      breaks: true,
-      headerIds: false,
-      mangle: false,
-    });
-  }
+function loadBookmarks(){
+  try { return JSON.parse(localStorage.getItem(LS.bookmarks) || "{}") || {}; }
+  catch { return {}; }
 }
-function renderMarkdown(md) {
-  const raw = (md ?? "").toString();
-  const html = window.marked ? marked.parse(raw) : raw.replaceAll("\n", "<br/>");
-  return window.DOMPurify ? DOMPurify.sanitize(html) : html;
+function saveBookmarks(){
+  localStorage.setItem(LS.bookmarks, JSON.stringify(state.bookmarks));
+}
+function isBookmarked(id){ return !!state.bookmarks[id]; }
+function toggleBookmark(post){
+  if (!post?.id) return false;
+  if (state.bookmarks[post.id]) {
+    delete state.bookmarks[post.id];
+    saveBookmarks();
+    toast("북마크 제거");
+    return false;
+  }
+  state.bookmarks[post.id] = {
+    id: post.id,
+    title: post.title,
+    category: post.category,
+    authorName: post.authorName,
+    createdAt: post.createdAt,
+    pinned: !!post.pinned
+  };
+  saveBookmarks();
+  toast("북마크 추가");
+  return true;
 }
 
-/* -----------------------
-   Lucide icons
------------------------- */
-function renderIcons() {
+/* ---------- UI Refs ---------- */
+const $boot = $("#boot");
+const $bootFill = $("#bootFill");
+const $bootPct = $("#bootPct");
+const $bootLog = $("#bootLog");
+const $bootBubbles = $("#bootBubbles");
+
+const $rtDot = $("#rtDot");
+const $rtLabel = $("#rtLabel");
+const $rtMeta = $("#rtMeta");
+
+const $themeBtn = $("#themeBtn");
+const $bookmarksBtn = $("#bookmarksBtn");
+const $activityBtn = $("#activityBtn");
+
+const $loginBtn = $("#loginBtn");
+const $userBox = $("#userBox");
+
+const $qInput = $("#qInput");
+const $searchBtn = $("#searchBtn");
+const $sortSel = $("#sortSel");
+const $refreshBtn = $("#refreshBtn");
+
+const $chips = $$(".chip");
+const $newPostBtn = $("#newPostBtn");
+const $fabBtn = $("#fabBtn");
+const $homeBtn = $("#homeBtn");
+
+const $banner = $("#banner");
+
+const $feedView = $("#feedView");
+const $postView = $("#postView");
+const $list = $("#list");
+const $loadMoreBtn = $("#loadMoreBtn");
+const $loadMoreMeta = $("#loadMoreMeta");
+const $pillCount = $("#pillCount");
+const $feedTitle = $("#feedTitle");
+const $feedSub = $("#feedSub");
+
+const $backBtn = $("#backBtn");
+const $postCat = $("#postCat");
+const $postAuthor = $("#postAuthor");
+const $postTime = $("#postTime");
+const $postTitle = $("#postTitle");
+const $postBody = $("#postBody");
+const $postLikeCount = $("#postLikeCount");
+const $postCommentCount = $("#postCommentCount");
+const $postLikeBtn = $("#postLikeBtn");
+const $postReportBtn = $("#postReportBtn");
+const $postBookmarkBtn = $("#postBookmarkBtn");
+const $postPinBtn = $("#postPinBtn");
+const $postEditBtn = $("#postEditBtn");
+const $postDeleteBtn = $("#postDeleteBtn");
+
+const $commentMeta = $("#commentMeta");
+const $commentAnon = $("#commentAnon");
+const $commentPreviewBtn = $("#commentPreviewBtn");
+const $commentInput = $("#commentInput");
+const $commentSendBtn = $("#commentSendBtn");
+const $commentPreview = $("#commentPreview");
+const $commentList = $("#commentList");
+
+const $modalRoot = $("#modalRoot");
+const $toastRoot = $("#toastRoot");
+
+/* ---------- Markdown config ---------- */
+marked.setOptions({
+  gfm: true,
+  breaks: true,
+  headerIds: false,
+  mangle: false
+});
+function md(htmlMd){
+  const raw = marked.parse(String(htmlMd || ""));
+  return DOMPurify.sanitize(raw, {
+    USE_PROFILES: { html: true },
+    ADD_ATTR: ["target", "rel"]
+  });
+}
+
+/* ---------- Icons ---------- */
+function renderIcons(){
   try {
-    if (window.lucide && lucide.createIcons) lucide.createIcons();
+    if (window.lucide && typeof lucide.createIcons === "function") {
+      lucide.createIcons();
+    }
   } catch {}
 }
 
-/* -----------------------
-   Time formatting
------------------------- */
-function fmtTime(ms) {
-  const d = new Date(ms);
-  const yy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mi = String(d.getMinutes()).padStart(2, "0");
-  return `${yy}.${mm}.${dd} ${hh}:${mi}`;
-}
-function relTime(ms) {
-  const diff = Date.now() - ms;
-  const m = Math.floor(diff / 60000);
-  if (m < 1) return "방금";
-  if (m < 60) return `${m}분 전`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}시간 전`;
-  const d = Math.floor(h / 24);
-  return `${d}일 전`;
-}
-
-/* -----------------------
-   Toast + Banner
------------------------- */
-function toast(title, msg, ms = 2600) {
-  const t = document.createElement("div");
-  t.className = "toast";
-  t.innerHTML = `
-    <div class="toast__top">
-      <div class="toast__title">${escapeHtml(title)}</div>
-      <button class="btn btn--ghost" type="button" aria-label="닫기">닫기</button>
-    </div>
-    <div class="toast__msg">${escapeHtml(msg)}</div>
-  `;
-  const closeBtn = qs("button", t);
-  closeBtn.addEventListener("click", () => t.remove());
-  $toastRoot.appendChild(t);
-  setTimeout(() => t.remove(), ms);
-}
-
-let bannerTimer = null;
-function banner(msg) {
-  $banner.textContent = msg;
+/* ---------- Banner / Toast ---------- */
+function banner(msg, type="info"){
   $banner.classList.remove("is-hidden");
-  if (bannerTimer) clearTimeout(bannerTimer);
-  bannerTimer = setTimeout(() => $banner.classList.add("is-hidden"), 4200);
+  $banner.textContent = msg;
+  $banner.dataset.type = type;
+  clearTimeout(banner._t);
+  banner._t = setTimeout(()=>{ $banner.classList.add("is-hidden"); }, 4500);
+}
+function toast(msg){
+  const el = document.createElement("div");
+  el.className = "toast";
+  el.textContent = msg;
+  $toastRoot.appendChild(el);
+  setTimeout(()=>{ el.style.opacity = "0"; el.style.transform = "translateY(6px)"; }, 2200);
+  setTimeout(()=>{ el.remove(); }, 2800);
 }
 
-/* -----------------------
-   Modal helpers
------------------------- */
-function openModal({ title, bodyHtml, footHtml, onMount }) {
-  $modalRoot.classList.remove("is-hidden");
-  $modalRoot.setAttribute("aria-hidden", "false");
-
-  $modalRoot.innerHTML = `
-    <div class="modal" role="dialog" aria-modal="true">
-      <div class="modal__head">
-        <div class="modal__title">${escapeHtml(title || "")}</div>
-        <button class="btn btn--ghost" id="modalCloseBtn" type="button">닫기</button>
-      </div>
-      <div class="modal__body">${bodyHtml || ""}</div>
-      <div class="modal__foot">${footHtml || ""}</div>
-    </div>
-  `;
-
-  const close = () => closeModal();
-  el("modalCloseBtn")?.addEventListener("click", close);
-  $modalRoot.addEventListener("click", (e) => {
-    if (e.target === $modalRoot) close();
-  }, { once: true });
-
-  document.addEventListener("keydown", function esc(e) {
-    if (e.key === "Escape") {
-      close();
-      document.removeEventListener("keydown", esc);
-    }
-  });
-
-  if (typeof onMount === "function") onMount();
+/* ---------- Time ---------- */
+function relTime(ms){
+  const t = Number(ms||0);
+  if (!t) return "-";
+  const d = Date.now() - t;
+  const s = Math.floor(d/1000);
+  if (s < 60) return `${s}초 전`;
+  const m = Math.floor(s/60);
+  if (m < 60) return `${m}분 전`;
+  const h = Math.floor(m/60);
+  if (h < 24) return `${h}시간 전`;
+  const day = Math.floor(h/24);
+  return `${day}일 전`;
 }
-function closeModal() {
-  $modalRoot.classList.add("is-hidden");
-  $modalRoot.setAttribute("aria-hidden", "true");
-  $modalRoot.innerHTML = "";
+function fmtDate(ms){
+  const d = new Date(Number(ms||0));
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
 }
 
-/* -----------------------
-   Safe HTML
------------------------- */
-function escapeHtml(s) {
-  return (s ?? "").toString()
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
+/* ---------- API ---------- */
+async function api(path, { method="GET", body=null, qsObj=null } = {}){
+  const u = new URL(API_BASE + path);
+  if (qsObj) Object.entries(qsObj).forEach(([k,v])=> v!==undefined && v!==null && u.searchParams.set(k,String(v)));
+  const headers = { "content-type":"application/json" };
+  if (state.token) headers["Authorization"] = `Bearer ${state.token}`;
 
-/* -----------------------
-   Local user/session
------------------------- */
-function loadSession() {
-  const token = localStorage.getItem(LS.token) || "";
-  const u = localStorage.getItem(LS.user);
-  state.me = u ? safeJson(u) : null;
-  return token;
-}
-function setSession(token, user) {
-  localStorage.setItem(LS.token, token);
-  localStorage.setItem(LS.user, JSON.stringify(user));
-  state.me = user;
-  renderUserBox();
-}
-function clearSession() {
-  localStorage.removeItem(LS.token);
-  localStorage.removeItem(LS.user);
-  state.me = null;
-  renderUserBox();
-}
-function safeJson(str) {
-  try { return JSON.parse(str); } catch { return null; }
-}
-
-/* -----------------------
-   Bookmarks
------------------------- */
-function getBookmarks() {
-  const raw = localStorage.getItem(LS.bookmarks);
-  const obj = raw ? safeJson(raw) : null;
-  return obj && typeof obj === "object" ? obj : {};
-}
-function setBookmarks(obj) {
-  localStorage.setItem(LS.bookmarks, JSON.stringify(obj));
-}
-function isBookmarked(postId) {
-  const b = getBookmarks();
-  return !!b[postId];
-}
-function toggleBookmark(post) {
-  const b = getBookmarks();
-  if (b[post.id]) {
-    delete b[post.id];
-    setBookmarks(b);
-    toast("북마크", "북마크에서 제거했어요.");
-    return false;
-  } else {
-    b[post.id] = {
-      id: post.id,
-      title: post.title,
-      category: post.category,
-      createdAt: post.createdAt,
-      pinned: !!post.pinned
-    };
-    setBookmarks(b);
-    toast("북마크", "북마크에 저장했어요.");
-    return true;
-  }
-}
-
-/* -----------------------
-   API wrapper
------------------------- */
-async function api(path, { method = "GET", body, token, qsObj } = {}) {
-  const url = new URL(API_BASE + path);
-  if (qsObj) {
-    for (const [k, v] of Object.entries(qsObj)) {
-      if (v === undefined || v === null || v === "") continue;
-      url.searchParams.set(k, String(v));
-    }
-  }
-
-  const headers = { "content-type": "application/json" };
-  const t = token ?? localStorage.getItem(LS.token) ?? "";
-  if (t) headers["Authorization"] = `Bearer ${t}`;
-
-  const res = await fetch(url.toString(), {
+  const res = await fetch(u.toString(), {
     method,
     headers,
-    body: body ? JSON.stringify(body) : undefined,
+    body: body ? JSON.stringify(body) : null
   });
 
   let data = null;
-  const ct = res.headers.get("content-type") || "";
-  if (ct.includes("application/json")) data = await res.json().catch(() => null);
-  else data = await res.text().catch(() => null);
+  try { data = await res.json(); } catch { data = null; }
 
-  if (!res.ok) {
-    const msg = (data && data.message) || (data && data.error) || `HTTP ${res.status}`;
+  if (!res.ok || (data && data.ok === false)) {
+    const msg = (data && (data.message || data.error)) || `HTTP ${res.status}`;
     throw new Error(msg);
   }
   return data;
 }
 
-/* -----------------------
-   Boot loader animation
------------------------- */
-function bootSet(pct, task) {
-  const clamped = Math.max(0, Math.min(100, pct));
-  $bootBar.style.width = `${clamped}%`;
-  $bootPct.textContent = String(Math.floor(clamped));
-  if (task) $bootTask.textContent = task;
+/* ---------- Theme ---------- */
+function applyTheme(theme){
+  if (theme === "light") document.documentElement.dataset.theme = "light";
+  else document.documentElement.dataset.theme = "dark";
+  localStorage.setItem(LS.theme, theme);
+  renderIcons();
 }
-function bootRandomizer() {
-  // 로딩바/스피너 속도를 “가끔 멈춤/느림/빠름”처럼 보이게 만드는 랜덤 템포
-  let pct = 0;
-  let alive = true;
-
-  const tasksFake = [
-    "UI 컴포넌트 로딩…",
-    "글래스 렌더링 최적화…",
-    "Markdown 파서 준비…",
-    "북마크 인덱스 생성…",
-    "실시간 채널 핸드셰이크…",
-    "캐시 워밍업…",
-  ];
-  const tasksReal = [
-    "서버 연결 확인…",
-    "세션 확인…",
-    "피드 불러오는 중…",
-  ];
-
-  let taskIndex = 0;
-
-  const tick = () => {
-    if (!alive) return;
-
-    // 랜덤한 속도/정지 느낌
-    const r = Math.random();
-    let delta = 0;
-    if (r < 0.08) delta = 0;          // 잠깐 멈춤
-    else if (r < 0.22) delta = 0.3;   // 매우 느림
-    else if (r < 0.70) delta = 1.2;   // 보통
-    else delta = 2.2;                 // 빠름
-
-    // 0~82까지만 자동 진행, 이후는 실데이터 완료시 마무리
-    pct = Math.min(82, pct + delta);
-
-    // task는 real/fake 섞어서 보여줌
-    let task = tasksReal[Math.min(tasksReal.length - 1, taskIndex)] || "초기화 중…";
-    if (pct > 30 && Math.random() < 0.25) {
-      task = tasksFake[Math.floor(Math.random() * tasksFake.length)];
-    }
-    bootSet(pct, task);
-
-    setTimeout(tick, 120 + Math.random() * 260);
-  };
-
-  tick();
-
-  return {
-    setRealStep(i) { taskIndex = i; },
-    async finish(finalTask = "완료!") {
-      // 82 → 100 부드럽게
-      bootSet(Math.max(pct, 82), finalTask);
-      await sleep(180);
-      for (let i = Math.max(pct, 82); i <= 100; i += 2.6) {
-        bootSet(i, finalTask);
-        await sleep(28 + Math.random() * 24);
-      }
-      alive = false;
-      $boot.classList.add("is-hidden");
-      $boot.setAttribute("aria-hidden", "true");
-    }
-  };
-}
-function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
-
-/* -----------------------
-   Theme
------------------------- */
-function initTheme() {
+function initTheme(){
   const saved = localStorage.getItem(LS.theme);
-  if (saved === "light" || saved === "dark") {
-    document.documentElement.setAttribute("data-theme", saved);
-  } else {
-    // 기본: 다크
-    document.documentElement.setAttribute("data-theme", "dark");
-  }
-}
-function toggleTheme() {
-  const cur = document.documentElement.getAttribute("data-theme") || "dark";
-  const next = cur === "dark" ? "light" : "dark";
-  document.documentElement.setAttribute("data-theme", next);
-  localStorage.setItem(LS.theme, next);
-  toast("테마", next === "dark" ? "다크 테마" : "라이트 테마");
+  if (saved) return applyTheme(saved);
+  // default: dark
+  applyTheme("dark");
 }
 
-/* -----------------------
-   Realtime WS
------------------------- */
-function connectWS() {
-  const wsUrl = API_BASE.replace(/^http/, "ws") + "/realtime?channel=feed";
-  if (state.ws) {
-    try { state.ws.close(); } catch {}
-    state.ws = null;
+/* ---------- Boot loading animation ---------- */
+function boot(){
+  let pct = 0;
+  const tasks = [
+    "UI 구성 요소 준비…",
+    "테마/아이콘 로딩…",
+    "세션 확인…",
+    "피드 데이터 요청…",
+    "실시간 채널 연결…",
+    "마크다운 렌더러 준비…",
+    "북마크 불러오기…",
+    "마무리 중…"
+  ];
+  let i = 0;
+
+  function addBubble(){
+    const b = document.createElement("span");
+    b.className = "bubble";
+    const left = Math.random()*100;
+    const size = 4 + Math.random()*10;
+    const dur = 900 + Math.random()*1400;
+    b.style.left = left + "%";
+    b.style.width = size + "px";
+    b.style.height = size + "px";
+    b.style.position = "absolute";
+    b.style.bottom = "-10px";
+    b.style.borderRadius = "999px";
+    b.style.background = "rgba(255,255,255,.55)";
+    b.style.filter = "blur(.2px)";
+    b.style.opacity = ".85";
+    b.style.transform = "translateY(0)";
+    b.style.transition = `transform ${dur}ms ease, opacity ${dur}ms ease`;
+    $bootBubbles.appendChild(b);
+    requestAnimationFrame(()=>{
+      b.style.transform = "translateY(-26px)";
+      b.style.opacity = "0";
+    });
+    setTimeout(()=> b.remove(), dur+80);
   }
+  const bubbleTimer = setInterval(()=>{ if (Math.random()<0.55) addBubble(); }, 180);
 
-  $rtLabel.textContent = "실시간: 연결 시도";
-  $rtMeta.textContent = "—";
-  setRtDot("pending");
+  return new Promise((resolve)=>{
+    const tick = async ()=>{
+      const step = 2 + Math.random()*10;          // random speed
+      const jitter = Math.random() < 0.08 ? -10 : 0; // sometimes slow/back
+      pct = clamp(pct + step + jitter, 0, 100);
+      $bootFill.style.width = pct + "%";
+      $bootPct.textContent = String(Math.floor(pct));
 
-  const ws = new WebSocket(wsUrl);
-  state.ws = ws;
-
-  let lastEventAt = 0;
-  let pingTimer = null;
-
-  ws.onopen = () => {
-    state.wsConnected = true;
-    setRtDot("ok");
-    $rtLabel.textContent = "실시간: 연결됨";
-    $rtMeta.textContent = "LIVE";
-    pingTimer = setInterval(() => {
-      try { ws.send("ping"); } catch {}
-    }, 12000);
-  };
-
-  ws.onmessage = (e) => {
-    const s = typeof e.data === "string" ? e.data : "";
-    if (s === "pong") return;
-
-    lastEventAt = Date.now();
-    // feed 이벤트면 현재 화면을 “필요시” 갱신
-    try {
-      const msg = JSON.parse(s);
-      if (msg?.type === "event" && msg?.payload?.kind) {
-        // 너무 과한 자동 갱신은 UX 나쁨 → 배너만 띄우고 새로고침 유도
-        banner(`새 이벤트: ${msg.payload.kind} · 새로고침하면 반영돼요`);
+      if (Math.random()<0.25){
+        $bootLog.textContent = tasks[i % tasks.length];
+        i++;
       }
-    } catch {}
-  };
 
-  ws.onclose = () => {
-    state.wsConnected = false;
-    setRtDot("bad");
-    $rtLabel.textContent = "실시간: 끊김";
-    $rtMeta.textContent = "OFF";
-    if (pingTimer) clearInterval(pingTimer);
-    // 자동 재연결
-    setTimeout(() => {
-      if (document.visibilityState === "visible") connectWS();
-    }, 1500 + Math.random() * 1200);
-  };
+      if (pct >= 100){
+        clearInterval(bubbleTimer);
+        setTimeout(()=>{
+          $boot.style.opacity = "0";
+          $boot.style.transition = "opacity .28s ease";
+          setTimeout(()=>{ $boot.remove(); resolve(); }, 320);
+        }, 180);
+        return;
+      }
 
-  ws.onerror = () => {
-    // close로 이어질 것
-  };
-
-  // 상태 텍스트: 마지막 이벤트 시간
-  setInterval(() => {
-    if (!state.wsConnected) return;
-    if (!lastEventAt) {
-      $rtMeta.textContent = "LIVE";
-    } else {
-      $rtMeta.textContent = relTime(lastEventAt);
-    }
-  }, 1000);
-}
-function setRtDot(mode) {
-  // ok/pending/bad
-  if (mode === "ok") {
-    $rtDot.style.background = "rgba(46,229,157,.9)";
-    $rtDot.style.boxShadow = "0 0 0 6px rgba(46,229,157,.18)";
-  } else if (mode === "pending") {
-    $rtDot.style.background = "rgba(255,176,32,.85)";
-    $rtDot.style.boxShadow = "0 0 0 6px rgba(255,176,32,.14)";
-  } else {
-    $rtDot.style.background = "rgba(255,77,109,.85)";
-    $rtDot.style.boxShadow = "0 0 0 6px rgba(255,77,109,.14)";
-  }
+      const wait = 60 + Math.random()*180 + (Math.random()<0.12 ? 260 : 0); // sometimes pause
+      setTimeout(tick, wait);
+    };
+    tick();
+  });
 }
 
-/* -----------------------
-   Views
------------------------- */
-function showView(name) {
-  state.view = name;
-  $feedView.classList.toggle("is-hidden", name !== "feed");
-  $postView.classList.toggle("is-hidden", name !== "post");
-  $myView.classList.toggle("is-hidden", name !== "my");
-  $adminView.classList.toggle("is-hidden", name !== "admin");
-
-  $segFeed.classList.toggle("is-active", name === "feed");
-  $segMy.classList.toggle("is-active", name === "my");
-  $segAdmin.classList.toggle("is-active", name === "admin");
-
-  // FAB는 피드/내활동에서만
-  $fabBtn.style.display = (name === "feed" || name === "my") ? "" : "none";
-}
-
-/* -----------------------
-   User UI
------------------------- */
-function renderUserBox() {
-  const me = state.me;
-  if (!me) {
-    $userBox.innerHTML = `<button class="btn btn--primary" id="loginBtn" type="button">로그인</button>`;
-    qs("#loginBtn", $userBox).addEventListener("click", () => openLoginModal());
-    $segMy.title = "로그인 필요";
-    $segAdmin.title = "관리자 전용";
-    $meMini.textContent = "";
+/* ---------- Auth UI ---------- */
+function renderUserBox(){
+  if (!state.me) {
+    $userBox.innerHTML = `<button class="btn btn--primary" id="loginBtn2" type="button">로그인</button>`;
+    $("#loginBtn2").addEventListener("click", openLogin);
     return;
   }
 
-  const role = me.role || "student";
-  const roleBadge = role === "admin" ? "ADMIN" : role === "mod" ? "MOD" : "USER";
+  const roleBadge = state.me.role === "admin" ? "ADMIN" : (state.me.role === "mod" ? "MOD" : "STUDENT");
 
   $userBox.innerHTML = `
-    <button class="btn btn--ghost" id="accountBtn" type="button">
+    <div class="pill">
       <span class="icon" data-lucide="user"></span>
-      <span>${escapeHtml(me.nickname)}</span>
-      <span class="pill">${roleBadge}</span>
+      ${escapeHtml(state.me.nickname)}
+      <span style="opacity:.65">(${roleBadge})</span>
+    </div>
+    <button class="btn btn--ghost" id="logoutBtn" type="button">
+      <span class="icon" data-lucide="log-out"></span> 로그아웃
     </button>
-  `;
-  qs("#accountBtn", $userBox).addEventListener("click", () => openAccountModal());
-  renderIcons();
-
-  $meMini.innerHTML = `<span class="pill">${escapeHtml(me.nickname)}</span> <span class="muted">(${escapeHtml(me.studentId || "—")})</span>`;
-}
-
-function openAccountModal() {
-  const me = state.me;
-  openModal({
-    title: "계정",
-    bodyHtml: `
-      <div class="field">
-        <div class="label">닉네임</div>
-        <div><b>${escapeHtml(me.nickname)}</b> <span class="pill">${escapeHtml(me.role || "student")}</span></div>
-      </div>
-      <div class="field">
-        <div class="label">학번</div>
-        <div>${escapeHtml(me.studentId || "—")}</div>
-      </div>
-      <div class="hr"></div>
-      <div class="field">
-        <div class="label">비밀번호 변경</div>
-        <div class="help">현재 비밀번호를 알고 있을 때만 변경 가능</div>
-        <input id="oldPw" class="input" type="password" placeholder="현재 비밀번호" />
-        <input id="newPw" class="input" type="password" placeholder="새 비밀번호 (4자 이상)" />
-      </div>
-      <div class="small">비밀번호 찾기는 “재설정 토큰” 방식입니다. (운영진에게 요청)</div>
-    `,
-    footHtml: `
-      <button class="btn btn--ghost" id="logoutBtn" type="button">로그아웃</button>
-      <button class="btn btn--primary" id="changePwBtn" type="button">비밀번호 변경</button>
-    `,
-    onMount() {
-      el("logoutBtn").addEventListener("click", async () => {
-        try { await api("/auth/logout", { method: "POST" }); } catch {}
-        clearSession();
-        closeModal();
-        toast("로그아웃", "안전하게 로그아웃했어요.");
-      });
-
-      el("changePwBtn").addEventListener("click", async () => {
-        const oldPassword = el("oldPw").value.trim();
-        const newPassword = el("newPw").value.trim();
-        if (!oldPassword || !newPassword) return toast("오류", "비밀번호를 입력해 주세요.");
-        try {
-          await api("/auth/change-password", { method: "POST", body: { oldPassword, newPassword } });
-          toast("완료", "비밀번호를 변경했어요.");
-          closeModal();
-        } catch (e) {
-          toast("실패", e.message || "비밀번호 변경 실패");
-        }
-      });
-    }
-  });
-}
-
-/* -----------------------
-   Auth modals
------------------------- */
-function openLoginModal() {
-  openModal({
-    title: "로그인 / 회원가입",
-    bodyHtml: `
-      <div class="field">
-        <div class="label">로그인</div>
-        <input id="loginId" class="input" placeholder="닉네임 또는 학번" />
-        <input id="loginPw" class="input" type="password" placeholder="비밀번호" />
-        <div class="row">
-          <button class="btn btn--primary" id="doLogin" type="button">로그인</button>
-          <button class="btn btn--ghost" id="openReset" type="button">비밀번호 찾기</button>
-        </div>
-      </div>
-
-      <div class="hr"></div>
-
-      <div class="field">
-        <div class="label">회원가입</div>
-        <input id="regNick" class="input" placeholder="닉네임 (2~16, 영문/숫자/한글/_)" />
-        <input id="regSid" class="input" placeholder="학번 (선택)" />
-        <input id="regPw" class="input" type="password" placeholder="비밀번호 (4자 이상)" />
-        <div class="row">
-          <button class="btn btn--primary" id="doReg" type="button">가입하기</button>
-        </div>
-      </div>
-    `,
-    footHtml: `<button class="btn btn--ghost" type="button" id="closeAuth">닫기</button>`,
-    onMount() {
-      el("closeAuth").addEventListener("click", closeModal);
-
-      el("doLogin").addEventListener("click", async () => {
-        const identifier = el("loginId").value.trim();
-        const password = el("loginPw").value.trim();
-        if (!identifier || !password) return toast("오류", "아이디/비밀번호를 입력해 주세요.");
-        try {
-          const r = await api("/auth/login", { method: "POST", body: { identifier, password } });
-          setSession(r.token, r.user);
-          closeModal();
-          toast("환영합니다", `${r.user.nickname}님 로그인 완료`);
-          // 갱신
-          await refreshFeed(true);
-          renderAdminSeg();
-        } catch (e) {
-          toast("로그인 실패", e.message || "다시 시도해 주세요");
-        }
-      });
-
-      el("doReg").addEventListener("click", async () => {
-        const nickname = el("regNick").value.trim();
-        const studentId = el("regSid").value.trim();
-        const password = el("regPw").value.trim();
-        if (!nickname || !password) return toast("오류", "닉네임/비밀번호를 입력해 주세요.");
-        try {
-          await api("/auth/register", { method: "POST", body: { nickname, studentId, password } });
-          toast("가입 완료", "이제 로그인해 주세요.");
-          el("loginId").value = nickname;
-        } catch (e) {
-          toast("가입 실패", e.message || "이미 사용 중일 수 있어요");
-        }
-      });
-
-      el("openReset").addEventListener("click", () => openResetModal());
-    }
-  });
-}
-
-function openResetModal() {
-  openModal({
-    title: "비밀번호 찾기(재설정 요청)",
-    bodyHtml: `
-      <div class="field">
-        <div class="label">식별자</div>
-        <input id="resetIdentifier" class="input" placeholder="닉네임 또는 학번" />
-        <div class="help">요청 접수 후 운영진이 “재설정 토큰”을 발급해 줍니다.</div>
-      </div>
-      <div class="row">
-        <button class="btn btn--primary" id="requestResetBtn" type="button">요청 보내기</button>
-      </div>
-
-      <div class="hr"></div>
-
-      <div class="field">
-        <div class="label">토큰으로 재설정</div>
-        <input id="resetToken" class="input" placeholder="운영진이 준 resetToken" />
-        <input id="resetNewPw" class="input" type="password" placeholder="새 비밀번호 (4자 이상)" />
-        <button class="btn btn--primary" id="applyResetBtn" type="button">비밀번호 재설정</button>
-      </div>
-      <div class="small">
-        보안상 토큰은 1회용이며 만료가 있어요. 재설정하면 기존 로그인 세션은 종료됩니다.
-      </div>
-    `,
-    footHtml: `<button class="btn btn--ghost" type="button" id="closeReset">닫기</button>`,
-    onMount() {
-      el("closeReset").addEventListener("click", closeModal);
-
-      el("requestResetBtn").addEventListener("click", async () => {
-        const identifier = el("resetIdentifier").value.trim();
-        if (!identifier) return toast("오류", "식별자를 입력해 주세요.");
-        try {
-          const r = await api("/auth/request-reset", { method: "POST", body: { identifier } });
-          toast("요청 완료", r.message || "운영진에게 문의해 주세요.");
-        } catch (e) {
-          toast("실패", e.message || "요청 실패");
-        }
-      });
-
-      el("applyResetBtn").addEventListener("click", async () => {
-        const resetToken = el("resetToken").value.trim();
-        const newPassword = el("resetNewPw").value.trim();
-        if (!resetToken || !newPassword) return toast("오류", "토큰/새 비밀번호를 입력해 주세요.");
-        try {
-          await api("/auth/reset-password", { method: "POST", body: { resetToken, newPassword } });
-          toast("완료", "비밀번호를 재설정했어요. 다시 로그인해 주세요.");
-          closeModal();
-          openLoginModal();
-        } catch (e) {
-          toast("실패", e.message || "재설정 실패");
-        }
-      });
-    }
-  });
-}
-
-/* -----------------------
-   Feed actions
------------------------- */
-function catName(cat) {
-  if (cat === "free") return "자유";
-  if (cat === "notice") return "공지";
-  if (cat === "qna") return "Q&A";
-  if (cat === "study") return "스터디";
-  if (cat === "all") return "전체";
-  return cat;
-}
-
-function setCat(cat) {
-  state.cat = cat;
-  localStorage.setItem(LS.lastCat, cat);
-  qsa(".chip").forEach((b) => b.classList.toggle("is-active", b.dataset.cat === cat));
-  state.cursor = "";
-  refreshFeed(true);
-}
-
-function setSort(sort) {
-  state.sort = sort;
-  localStorage.setItem(LS.lastSort, sort);
-  state.cursor = "";
-  refreshFeed(true);
-}
-
-function setQ(q) {
-  state.q = q;
-  localStorage.setItem(LS.lastQ, q);
-  state.cursor = "";
-  refreshFeed(true);
-}
-
-function renderFeedHead() {
-  $feedTitle.textContent = state.cat === "all" ? "게시판" : `${catName(state.cat)} 게시판`;
-  const qtxt = state.q ? ` · 검색: "${state.q}"` : "";
-  const sortTxt = {
-    latest: "최신",
-    hot: "핫",
-    comments: "댓글 많은",
-    likes: "좋아요 많은",
-  }[state.sort] || state.sort;
-
-  $feedSub.textContent = `${sortTxt} 정렬${qtxt}`;
-  $pillCount.textContent = String(state.posts.length);
-}
-
-function postCard(post) {
-  const tagClass = post.category === "notice" ? "tag tag--notice" : "tag";
-  const pinned = post.pinned ? `<span class="pin"><span class="icon" data-lucide="pin"></span>고정</span>` : "";
-  const bmOn = isBookmarked(post.id);
-
-  const right = `
-    <div class="item__right">
-      <button class="starBtn ${bmOn ? "is-on" : ""}" type="button" data-bm="${post.id}" aria-label="북마크">
-        <span class="icon" data-lucide="star"></span>
+    ${isAdminRole(state.me.role) ? `
+      <button class="btn btn--ghost" id="adminReportsBtn" type="button">
+        <span class="icon" data-lucide="flag"></span> 신고함
       </button>
-      <span class="pill">👍 ${post.likes}</span>
-      <span class="pill">💬 ${post.comments}</span>
-    </div>
+    ` : ""}
   `;
 
-  const meta = `
-    <div class="item__meta">
-      <span>${escapeHtml(post.authorName)}</span>
-      <span class="dot">•</span>
-      <span title="${fmtTime(post.createdAt)}">${relTime(post.createdAt)}</span>
-      ${post.canPin ? `<span class="dot">•</span><span class="muted">관리자</span>` : ""}
-    </div>
-  `;
+  $("#logoutBtn").addEventListener("click", logout);
+  if (isAdminRole(state.me.role)) $("#adminReportsBtn").addEventListener("click", openAdminReports);
 
-  return `
-    <div class="item" tabindex="0" data-open="${post.id}">
-      <div class="item__top">
-        <span class="${tagClass}">${escapeHtml(catName(post.category))}</span>
-        ${pinned}
-        ${right}
+  renderIcons();
+}
+
+function escapeHtml(s){
+  return String(s||"")
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;")
+    .replaceAll("'","&#039;");
+}
+
+async function refreshMe(){
+  if (!state.token) { state.me = null; renderUserBox(); return; }
+  try {
+    const r = await api("/auth/me");
+    state.me = r.user;
+    localStorage.setItem(LS.me, JSON.stringify(state.me));
+    renderUserBox();
+  } catch {
+    state.me = null;
+    state.token = "";
+    localStorage.removeItem(LS.token);
+    renderUserBox();
+  }
+}
+
+async function logout(){
+  try { await api("/auth/logout", { method:"POST" }); } catch {}
+  state.token = "";
+  state.me = null;
+  localStorage.removeItem(LS.token);
+  localStorage.removeItem(LS.me);
+  renderUserBox();
+  banner("로그아웃 되었어요.");
+}
+
+/* ---------- Modal ---------- */
+function closeModal(){
+  $modalRoot.classList.add("is-hidden");
+  $modalRoot.setAttribute("aria-hidden", "true");
+  $modalRoot.innerHTML = "";
+}
+function openModal(title, bodyHtml, actionsHtml){
+  $modalRoot.classList.remove("is-hidden");
+  $modalRoot.setAttribute("aria-hidden", "false");
+
+  $modalRoot.innerHTML = `
+    <div class="modalBackdrop" data-close="1"></div>
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal__head">
+        <div class="modal__title">${escapeHtml(title)}</div>
+        <button class="btn btn--ghost" data-close="1" type="button">닫기</button>
       </div>
-      <div class="item__title">${escapeHtml(post.title)}</div>
-      ${meta}
+      <div class="modal__body">${bodyHtml}</div>
+      <div class="modal__actions">${actionsHtml || ""}</div>
+    </div>
+  `;
+
+  $$("[data-close]", $modalRoot).forEach(el => el.addEventListener("click", closeModal));
+  renderIcons();
+}
+
+function openLogin(){
+  openModal("로그인 / 회원가입",
+    `
+      <div class="card" style="padding:12px">
+        <div class="muted" style="margin-bottom:10px">
+          로그인: 닉네임 또는 학번 + 비밀번호<br/>
+          회원가입: 닉네임 + 비밀번호 + 학번(선택)
+        </div>
+
+        <div class="row" style="gap:10px; flex-wrap:wrap">
+          <input id="liId" class="input" placeholder="닉네임 또는 학번" style="flex:1; min-width:220px" />
+          <input id="liPw" class="input" placeholder="비밀번호" type="password" style="flex:1; min-width:220px" />
+        </div>
+        <div class="row" style="justify-content:flex-end; margin-top:10px">
+          <button class="btn btn--primary" id="doLogin" type="button">로그인</button>
+        </div>
+
+        <hr style="border:none; border-top:1px solid var(--stroke); margin:14px 0"/>
+
+        <div class="row" style="gap:10px; flex-wrap:wrap">
+          <input id="reNick" class="input" placeholder="닉네임(2~16)" style="flex:1; min-width:220px" />
+          <input id="rePw" class="input" placeholder="비밀번호(4+)" type="password" style="flex:1; min-width:220px" />
+          <input id="reSid" class="input" placeholder="학번(선택)" style="flex:1; min-width:220px" />
+        </div>
+        <div class="row" style="justify-content:flex-end; margin-top:10px">
+          <button class="btn btn--ghost" id="doRegister" type="button">회원가입</button>
+        </div>
+      </div>
+    `,
+    ``
+  );
+
+  $("#doLogin").addEventListener("click", async ()=>{
+    const identifier = $("#liId").value.trim();
+    const password = $("#liPw").value.trim();
+    if (!identifier || !password) return toast("아이디/비밀번호를 입력해줘");
+    try {
+      const r = await api("/auth/login", { method:"POST", body:{ identifier, password } });
+      state.token = r.token;
+      localStorage.setItem(LS.token, state.token);
+      state.me = r.user;
+      localStorage.setItem(LS.me, JSON.stringify(state.me));
+      closeModal();
+      renderUserBox();
+      banner(`어서와요, ${state.me.nickname}!`);
+      await loadFeed(true);
+    } catch(e){
+      toast("로그인 실패: " + e.message);
+    }
+  });
+
+  $("#doRegister").addEventListener("click", async ()=>{
+    const nickname = $("#reNick").value.trim();
+    const password = $("#rePw").value.trim();
+    const studentId = $("#reSid").value.trim();
+    if (!nickname || !password) return toast("닉네임/비밀번호를 입력해줘");
+    try {
+      await api("/auth/register", { method:"POST", body:{ nickname, password, studentId: studentId || undefined } });
+      toast("회원가입 성공! 이제 로그인해줘.");
+      $("#liId").value = nickname;
+      $("#liPw").focus();
+    } catch(e){
+      toast("회원가입 실패: " + e.message);
+    }
+  });
+}
+
+/* ---------- Feed rendering ---------- */
+function catLabel(c){
+  if (c==="free") return "자유";
+  if (c==="notice") return "공지";
+  if (c==="qna") return "Q&A";
+  if (c==="study") return "스터디";
+  return "전체";
+}
+function postCard(p){
+  const bm = isBookmarked(p.id);
+  return `
+    <div class="item" data-open="${p.id}" tabindex="0">
+      <div class="item__top">
+        <span class="tag">${escapeHtml(catLabel(p.category))}</span>
+        ${p.pinned ? `<span class="pin"><span class="icon" data-lucide="pin"></span>고정</span>` : ""}
+        <span class="pill">${escapeHtml(p.authorName)}</span>
+        <span class="pill">${escapeHtml(relTime(p.createdAt))}</span>
+        <div class="item__right">
+          <span class="pill">👍 ${p.likes}</span>
+          <span class="pill">💬 ${p.comments}</span>
+          <button class="btn btn--ghost" data-bm="${p.id}" type="button" title="북마크">
+            <span class="icon" data-lucide="bookmark" style="opacity:${bm?1:0.55}"></span>
+          </button>
+        </div>
+      </div>
+      <div class="item__title">${escapeHtml(p.title)}</div>
+      <div class="item__meta">
+        <span>정렬: ${escapeHtml(state.sort)}</span>
+        <span>•</span>
+        <span>${escapeHtml(fmtDate(p.createdAt))}</span>
+      </div>
     </div>
   `;
 }
 
-function renderFeedList() {
-  renderFeedHead();
-  $list.innerHTML = state.posts.map(postCard).join("");
-
-  // bind open + bookmark
-  qsa("[data-open]", $list).forEach((node) => {
-    const id = node.getAttribute("data-open");
-    node.addEventListener("click", () => openPost(id));
-    node.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") openPost(id);
+function bindListClicks(posts){
+  $$("[data-open]", $list).forEach(el=>{
+    el.addEventListener("click", ()=>{
+      const id = el.getAttribute("data-open");
+      openPost(id);
     });
   });
-
-  qsa("[data-bm]", $list).forEach((btn) => {
-    btn.addEventListener("click", (e) => {
+  $$("[data-bm]", $list).forEach(btn=>{
+    btn.addEventListener("click", (e)=>{
       e.stopPropagation();
       const id = btn.getAttribute("data-bm");
-      const p = state.posts.find(x => x.id === id);
+      const p = posts.find(x=>x.id===id);
       if (!p) return;
       const on = toggleBookmark(p);
-      btn.classList.toggle("is-on", on);
+      btn.querySelector(".icon")?.style && (btn.querySelector(".icon").style.opacity = on ? "1" : "0.55");
       renderIcons();
     });
   });
-
-  renderIcons();
 }
 
-async function refreshFeed(reset = false) {
+/* ---------- Feed load ---------- */
+async function loadFeed(reset=false){
   if (state.loading) return;
   state.loading = true;
 
-  try {
-    if (reset) {
+  try{
+    if (reset){
       state.cursor = "";
-      state.posts = [];
-      $loadMoreMeta.textContent = "불러오는 중…";
+      state.list = [];
+      $list.innerHTML = "";
+      $loadMoreMeta.textContent = "";
     }
+
+    $loadMoreBtn.disabled = true;
+    $loadMoreBtn.textContent = "불러오는 중…";
 
     const r = await api("/posts", {
       qsObj: {
-        category: state.cat,
-        q: state.q,
+        category: state.category,
+        q: state.q || undefined,
         sort: state.sort,
-        cursor: state.cursor,
+        cursor: state.cursor || undefined,
         pageSize: 50
       }
     });
 
     const posts = r.posts || [];
     state.cursor = r.nextCursor || "";
-    state.posts = reset ? posts : state.posts.concat(posts);
+    state.list = state.list.concat(posts);
+
+    $pillCount.textContent = String(state.list.length);
+    $feedTitle.textContent = state.category==="all" ? "게시판" : catLabel(state.category);
+    $feedSub.textContent = `${state.q ? `검색: "${state.q}" · ` : ""}정렬: ${state.sort}`;
+
+    if (reset && posts.length === 0){
+      $list.innerHTML = `<div class="card" style="padding:14px">아직 글이 없어요. <b>+ 새 글</b>로 첫 글을 올려보세요!</div>`;
+    } else {
+      const html = posts.map(postCard).join("");
+      $list.insertAdjacentHTML("beforeend", html);
+    }
+
+    bindListClicks(state.list);
+    renderIcons();
 
     $loadMoreBtn.disabled = !state.cursor;
-    $loadMoreMeta.textContent = state.cursor ? `다음 커서: ${state.cursor}` : "마지막 페이지";
-    renderFeedList();
-
-  } catch (e) {
-    banner(`불러오기 실패: ${e.message || "네트워크 오류"}`);
-    $loadMoreMeta.textContent = "오류 발생 (새로고침 시도)";
-  } finally {
+    $loadMoreBtn.textContent = state.cursor ? "더 보기" : "끝!";
+    $loadMoreMeta.textContent = state.cursor ? "더 오래된 글을 불러올 수 있어요." : "더 이상 불러올 글이 없어요.";
+  } catch(e){
+    banner("피드 로드 실패: " + e.message, "error");
+    $loadMoreBtn.disabled = false;
+    $loadMoreBtn.textContent = "다시 시도";
+  } finally{
     state.loading = false;
   }
 }
 
-/* -----------------------
-   Post detail
------------------------- */
-async function openPost(postId) {
-  showView("post");
-  location.hash = `#post=${encodeURIComponent(postId)}`;
+/* ---------- Post view ---------- */
+function showFeed(){
+  $postView.classList.add("is-hidden");
+  $feedView.classList.remove("is-hidden");
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+function showPost(){
+  $feedView.classList.add("is-hidden");
+  $postView.classList.remove("is-hidden");
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
 
-  $postBody.innerHTML = "";
-  $commentList.innerHTML = "";
-  $commentPreview.classList.add("is-hidden");
-  $commentInput.value = "";
-  $commentMeta.textContent = "불러오는 중…";
+let currentPost = null;
 
-  try {
+async function openPost(postId){
+  try{
+    showPost();
+    $postTitle.textContent = "불러오는 중…";
+    $postBody.innerHTML = "";
+    $commentList.innerHTML = "";
+    $commentMeta.textContent = "댓글 불러오는 중…";
+
     const r = await api(`/posts/${postId}`);
-    state.currentPost = r.post;
+    currentPost = r.post;
 
-    renderPost(state.currentPost);
-    await loadComments(postId);
-  } catch (e) {
-    toast("오류", e.message || "글 불러오기 실패");
-    showView("feed");
-  }
-}
+    $postCat.textContent = catLabel(currentPost.category);
+    $postAuthor.textContent = currentPost.authorName + (currentPost.anonymous ? " (익명)" : "");
+    $postTime.textContent = fmtDate(currentPost.createdAt);
+    $postTitle.textContent = currentPost.title;
+    $postBody.innerHTML = md(currentPost.bodyMd);
+    $postLikeCount.textContent = `👍 ${currentPost.likes}`;
+    $postCommentCount.textContent = `💬 ${currentPost.comments}`;
 
-function renderPost(post) {
-  $postCat.textContent = catName(post.category);
-  $postCat.className = post.category === "notice" ? "tag tag--notice" : "tag";
-  $postAuthor.textContent = post.authorName;
-  $postTime.textContent = `${fmtTime(post.createdAt)} · ${relTime(post.createdAt)}`;
-  $postTitle.textContent = post.title;
-  $postBody.innerHTML = renderMarkdown(post.bodyMd);
+    // bookmark btn state
+    const bmOn = isBookmarked(currentPost.id);
+    $postBookmarkBtn.querySelector(".icon")?.style && ($postBookmarkBtn.querySelector(".icon").style.opacity = bmOn ? "1" : "0.55");
 
-  $postLikeCount.textContent = `👍 ${post.likes}`;
-  $postCommentCount.textContent = `💬 ${post.comments}`;
+    // permissions
+    $postEditBtn.classList.toggle("is-hidden", !currentPost.canEdit);
+    $postDeleteBtn.classList.toggle("is-hidden", !currentPost.canDelete);
+    $postPinBtn.classList.toggle("is-hidden", !currentPost.canPin);
+    $postPinBtn.textContent = currentPost.pinned ? "📌 고정 해제" : "📌 고정";
 
-  // 권한 버튼
-  $postEditBtn.classList.toggle("is-hidden", !post.canEdit);
-  $postDeleteBtn.classList.toggle("is-hidden", !post.canDelete);
-
-  // admin pin
-  const canPin = !!post.canPin;
-  $postPinBtn.classList.toggle("is-hidden", !canPin);
-
-  // bookmark btn 상태
-  const on = isBookmarked(post.id);
-  $postBookmarkBtn.classList.toggle("is-on", on);
-  $postBookmarkBtn.title = on ? "북마크 해제" : "북마크";
-
-  // 이벤트 바인딩
-  $postBookmarkBtn.onclick = () => {
-    const on2 = toggleBookmark(post);
-    $postBookmarkBtn.classList.toggle("is-on", on2);
     renderIcons();
-  };
 
-  $postEditBtn.onclick = () => openEditPostModal(post);
-  $postDeleteBtn.onclick = () => confirmDeletePost(post);
-  $postReportBtn.onclick = () => openReportModal({ type: "post", id: post.id });
-  $postLikeBtn.onclick = () => toggleLike("post", post.id);
+    // comments
+    const cr = await api(`/posts/${postId}/comments`);
+    const comments = cr.comments || [];
+    $commentMeta.textContent = `${comments.length}개 댓글`;
+    $commentList.innerHTML = comments.map(c=>`
+      <div class="comment">
+        <div class="comment__meta">
+          <span class="pill">${escapeHtml(c.authorName)}</span>
+          <span class="pill">${escapeHtml(relTime(c.createdAt))}</span>
+        </div>
+        <div class="comment__body md">${md(c.bodyMd)}</div>
+      </div>
+    `).join("");
 
-  $postPinBtn.onclick = () => togglePin(post.id);
-
-  renderIcons();
-}
-
-async function togglePin(postId) {
-  try {
-    const r = await api(`/posts/${postId}/pin`, { method: "POST" });
-    toast("핀", r.pinned ? "공지 고정됨" : "고정 해제됨");
-    // 다시 로드
-    await openPost(postId);
-    // 피드도 갱신 (고정순 정렬 영향)
-    await refreshFeed(true);
-  } catch (e) {
-    toast("실패", e.message || "핀 토글 실패");
+  } catch(e){
+    banner("글 불러오기 실패: " + e.message, "error");
+    showFeed();
   }
 }
 
-async function toggleLike(targetType, targetId) {
-  try {
-    const r = await api("/likes/toggle", { method: "POST", body: { targetType, targetId } });
-    toast("좋아요", r.liked ? "좋아요!" : "좋아요 취소");
-    // 숫자 갱신은 서버 재조회가 확실
-    if (state.currentPost?.id) await openPost(state.currentPost.id);
-  } catch (e) {
-    toast("실패", e.message || "좋아요 실패");
-  }
+/* ---------- Create/Edit Post ---------- */
+function requireLogin(){
+  if (!state.me) { openLogin(); return false; }
+  return true;
 }
 
-function openReportModal({ type, id }) {
-  if (!state.me) return toast("로그인 필요", "신고는 로그인 후 가능해요.");
-  openModal({
-    title: "신고",
-    bodyHtml: `
-      <div class="field">
-        <div class="label">사유</div>
-        <input id="rpReason" class="input" placeholder="예) 스팸, 욕설, 도배" />
-      </div>
-      <div class="field">
-        <div class="label">상세</div>
-        <textarea id="rpDetail" class="textarea" rows="4" placeholder="상세 내용을 적어 주세요"></textarea>
-      </div>
-      <div class="small">운영진이 확인 후 조치합니다.</div>
-    `,
-    footHtml: `
-      <button class="btn btn--ghost" type="button" id="rpCancel">취소</button>
-      <button class="btn btn--primary" type="button" id="rpSend">신고하기</button>
-    `,
-    onMount() {
-      el("rpCancel").addEventListener("click", closeModal);
-      el("rpSend").addEventListener("click", async () => {
-        const reason = el("rpReason").value.trim() || "기타";
-        const detail = el("rpDetail").value.trim();
-        try {
-          await api("/reports", { method: "POST", body: { targetType: type, targetId: id, reason, detail } });
-          toast("접수 완료", "신고가 접수됐어요.");
-          closeModal();
-        } catch (e) {
-          toast("실패", e.message || "신고 실패");
-        }
-      });
-    }
-  });
-}
+function openWriteModal(edit=false){
+  if (!requireLogin()) return;
 
-function openEditPostModal(post) {
-  openModal({
-    title: "글 수정",
-    bodyHtml: `
-      <div class="field">
-        <div class="label">카테고리</div>
-        <select id="epCat" class="select__box">
+  const p = currentPost;
+  const title = edit ? "글 수정" : "새 글 작성";
+  const initCat = edit ? p.category : "free";
+  const initTitle = edit ? p.title : "";
+  const initBody = edit ? p.bodyMd : "";
+  const initAnon = edit ? !!p.anonymous : false;
+
+  openModal(title, `
+    <div class="row" style="gap:10px; flex-wrap:wrap">
+      <div class="select" style="min-width:220px; flex:1">
+        <label class="select__label" for="wCat">카테고리</label>
+        <select id="wCat" class="select__box">
           <option value="free">자유</option>
           <option value="notice">공지</option>
           <option value="qna">Q&A</option>
           <option value="study">스터디</option>
         </select>
       </div>
-      <div class="field">
-        <div class="label">제목</div>
-        <input id="epTitle" class="input" placeholder="제목" />
-      </div>
-      <div class="field">
-        <div class="label">본문 (Markdown)</div>
-        <textarea id="epBody" class="textarea" rows="10" placeholder="본문"></textarea>
-        <div class="help"># ~ ###### 제목, 코드블럭, 표, 인용 등 지원</div>
-      </div>
-      <div class="field">
-        <label class="toggle">
-          <input id="epAnon" type="checkbox" />
-          <span>익명</span>
-        </label>
-      </div>
-      <div class="field">
-        <div class="label">미리보기</div>
-        <div id="epPreview" class="md" style="border:1px solid var(--stroke);border-radius:14px;padding:12px;background:rgba(255,255,255,.04)"></div>
-      </div>
-    `,
-    footHtml: `
-      <button class="btn btn--ghost" type="button" id="epCancel">취소</button>
-      <button class="btn btn--primary" type="button" id="epSave">저장</button>
-    `,
-    onMount() {
-      el("epCat").value = post.category;
-      el("epTitle").value = post.title;
-      el("epBody").value = post.bodyMd;
-      el("epAnon").checked = !!post.anonymous;
-
-      const renderPrev = () => {
-        el("epPreview").innerHTML = renderMarkdown(el("epBody").value);
-      };
-      el("epBody").addEventListener("input", renderPrev);
-      renderPrev();
-
-      el("epCancel").addEventListener("click", closeModal);
-
-      el("epSave").addEventListener("click", async () => {
-        const category = el("epCat").value;
-        const title = el("epTitle").value.trim();
-        const bodyMd = el("epBody").value.trim();
-        const anonymous = el("epAnon").checked;
-
-        if (!title || !bodyMd) return toast("오류", "제목/본문을 입력해 주세요.");
-        try {
-          await api(`/posts/${post.id}`, { method: "PATCH", body: { category, title, bodyMd, anonymous } });
-          toast("완료", "수정했어요.");
-          closeModal();
-          await openPost(post.id);
-          await refreshFeed(true);
-        } catch (e) {
-          toast("실패", e.message || "수정 실패");
-        }
-      });
-    }
-  });
-}
-
-function confirmDeletePost(post) {
-  openModal({
-    title: "삭제 확인",
-    bodyHtml: `<div>정말 이 글을 삭제할까요?</div><div class="small">삭제 후 복구는 어려워요.</div>`,
-    footHtml: `
-      <button class="btn btn--ghost" type="button" id="dpCancel">취소</button>
-      <button class="btn btn--danger" type="button" id="dpOk">삭제</button>
-    `,
-    onMount() {
-      el("dpCancel").addEventListener("click", closeModal);
-      el("dpOk").addEventListener("click", async () => {
-        try {
-          await api(`/posts/${post.id}`, { method: "DELETE" });
-          toast("삭제됨", "글을 삭제했어요.");
-          closeModal();
-          showView("feed");
-          location.hash = "";
-          await refreshFeed(true);
-        } catch (e) {
-          toast("실패", e.message || "삭제 실패");
-        }
-      });
-    }
-  });
-}
-
-/* -----------------------
-   Comments
------------------------- */
-async function loadComments(postId) {
-  try {
-    const r = await api(`/posts/${postId}/comments`);
-    state.comments = r.comments || [];
-    renderComments();
-  } catch (e) {
-    $commentMeta.textContent = "댓글 불러오기 실패";
-    toast("오류", e.message || "댓글 로드 실패");
-  }
-}
-
-function renderComments() {
-  $commentMeta.textContent = `${state.comments.length}개`;
-  $commentList.innerHTML = state.comments.map(commentCard).join("");
-  renderIcons();
-
-  // bind edit/delete/report/like
-  qsa("[data-cmt-edit]", $commentList).forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const id = btn.getAttribute("data-cmt-edit");
-      const c = state.comments.find(x => x.id === id);
-      if (!c) return;
-      openEditCommentModal(c);
-    });
-  });
-  qsa("[data-cmt-del]", $commentList).forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const id = btn.getAttribute("data-cmt-del");
-      const c = state.comments.find(x => x.id === id);
-      if (!c) return;
-      confirmDeleteComment(c);
-    });
-  });
-  qsa("[data-cmt-report]", $commentList).forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const id = btn.getAttribute("data-cmt-report");
-      openReportModal({ type: "comment", id });
-    });
-  });
-}
-
-function commentCard(c) {
-  // edit/delete 버튼 노출 기준: 서버가 댓글에 canEdit을 주지 않기 때문에
-  // “내 닉네임과 동일 + 비익명”인 경우에만 버튼 제공 (익명은 본인여부 판별 불가)
-  const meNick = state.me?.nickname || "";
-  const canMaybeEdit = !!state.me && !c.anonymous && c.authorName === meNick;
-
-  return `
-    <div class="cmt">
-      <div class="cmt__top">
-        <div class="cmt__meta">
-          <span><b>${escapeHtml(c.authorName)}</b></span>
-          <span class="dot">•</span>
-          <span title="${fmtTime(c.createdAt)}">${relTime(c.createdAt)}</span>
-        </div>
-        <div class="cmt__actions">
-          <button class="iconBtn" type="button" data-cmt-report="${c.id}">🚩 신고</button>
-          ${canMaybeEdit ? `<button class="iconBtn" type="button" data-cmt-edit="${c.id}">수정</button>` : ""}
-          ${canMaybeEdit ? `<button class="iconBtn" type="button" data-cmt-del="${c.id}">삭제</button>` : ""}
-        </div>
-      </div>
-      <div class="md">${renderMarkdown(c.bodyMd)}</div>
+      <label class="toggle" style="margin-left:auto">
+        <input id="wAnon" type="checkbox" />
+        <span>익명</span>
+      </label>
     </div>
-  `;
-}
 
-function openEditCommentModal(c) {
-  openModal({
-    title: "댓글 수정",
-    bodyHtml: `
-      <div class="field">
-        <div class="label">본문 (Markdown)</div>
-        <textarea id="ecBody" class="textarea" rows="6"></textarea>
-      </div>
-      <div class="field">
-        <label class="toggle">
-          <input id="ecAnon" type="checkbox" />
-          <span>익명</span>
-        </label>
-      </div>
-      <div class="field">
-        <div class="label">미리보기</div>
-        <div id="ecPreview" class="md" style="border:1px solid var(--stroke);border-radius:14px;padding:12px;background:rgba(255,255,255,.04)"></div>
-      </div>
-      <div class="small">※ 익명 댓글은 본인 판별이 어려워 UI에서 수정 버튼이 제한될 수 있어요.</div>
-    `,
-    footHtml: `
-      <button class="btn btn--ghost" type="button" id="ecCancel">취소</button>
-      <button class="btn btn--primary" type="button" id="ecSave">저장</button>
-    `,
-    onMount() {
-      el("ecBody").value = c.bodyMd || "";
-      el("ecAnon").checked = !!c.anonymous;
-      const renderPrev = () => el("ecPreview").innerHTML = renderMarkdown(el("ecBody").value);
-      el("ecBody").addEventListener("input", renderPrev);
-      renderPrev();
+    <input id="wTitle" class="input" placeholder="제목" />
+    <textarea id="wBody" class="textarea" rows="10" placeholder="본문 (Markdown 지원)"></textarea>
 
-      el("ecCancel").addEventListener("click", closeModal);
-      el("ecSave").addEventListener("click", async () => {
-        const bodyMd = el("ecBody").value.trim();
-        const anonymous = el("ecAnon").checked;
-        if (!bodyMd) return toast("오류", "본문을 입력해 주세요.");
-        try {
-          await api(`/comments/${c.id}`, { method: "PATCH", body: { bodyMd, anonymous } });
-          toast("완료", "댓글을 수정했어요.");
-          closeModal();
-          if (state.currentPost?.id) await loadComments(state.currentPost.id);
-        } catch (e) {
-          toast("실패", e.message || "댓글 수정 실패");
-        }
-      });
-    }
-  });
-}
-
-function confirmDeleteComment(c) {
-  openModal({
-    title: "댓글 삭제",
-    bodyHtml: `<div>이 댓글을 삭제할까요?</div>`,
-    footHtml: `
-      <button class="btn btn--ghost" type="button" id="cdCancel">취소</button>
-      <button class="btn btn--danger" type="button" id="cdOk">삭제</button>
-    `,
-    onMount() {
-      el("cdCancel").addEventListener("click", closeModal);
-      el("cdOk").addEventListener("click", async () => {
-        try {
-          await api(`/comments/${c.id}`, { method: "DELETE" });
-          toast("삭제됨", "댓글을 삭제했어요.");
-          closeModal();
-          if (state.currentPost?.id) await loadComments(state.currentPost.id);
-        } catch (e) {
-          toast("실패", e.message || "댓글 삭제 실패");
-        }
-      });
-    }
-  });
-}
-
-/* 댓글 작성: Enter 전송 */
-function bindCommentEnter() {
-  $commentInput.addEventListener("keydown", async (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      await sendComment();
-    }
-  });
-}
-
-async function sendComment() {
-  if (!state.currentPost?.id) return;
-  if (!state.me) return toast("로그인 필요", "댓글은 로그인 후 작성할 수 있어요.");
-
-  const bodyMd = $commentInput.value.trim();
-  if (!bodyMd) return toast("오류", "댓글 내용을 입력해 주세요.");
-
-  const anonymous = $commentAnon.checked;
-  try {
-    await api(`/posts/${state.currentPost.id}/comments`, { method: "POST", body: { bodyMd, anonymous } });
-    $commentInput.value = "";
-    $commentPreview.classList.add("is-hidden");
-    toast("등록됨", "댓글을 등록했어요.");
-    await loadComments(state.currentPost.id);
-    // post counts 갱신
-    await openPost(state.currentPost.id);
-  } catch (e) {
-    toast("실패", e.message || "댓글 등록 실패");
-  }
-}
-
-/* -----------------------
-   Create post modal
------------------------- */
-function openNewPostModal() {
-  if (!state.me) return toast("로그인 필요", "글 작성은 로그인 후 가능해요.");
-
-  openModal({
-    title: "새 글 작성",
-    bodyHtml: `
-      <div class="field">
-        <div class="label">카테고리</div>
-        <select id="npCat" class="select__box">
-          <option value="free">자유</option>
-          <option value="notice">공지</option>
-          <option value="qna">Q&A</option>
-          <option value="study">스터디</option>
-        </select>
-        <div class="help">공지 작성은 가능하지만, 고정(pinned)은 관리자만 가능</div>
-      </div>
-      <div class="field">
-        <div class="label">제목</div>
-        <input id="npTitle" class="input" placeholder="제목" />
-      </div>
-      <div class="field">
-        <div class="label">본문 (Markdown)</div>
-        <textarea id="npBody" class="textarea" rows="10" placeholder="# 제목부터 ### 소제목까지, 코드블럭, 표, 이미지 등"></textarea>
-        <div class="help">이미지: <span class="kbd">![](https://...)</span></div>
-      </div>
-      <div class="field">
-        <label class="toggle">
-          <input id="npAnon" type="checkbox" />
-          <span>익명</span>
-        </label>
-      </div>
-      <div class="field">
-        <div class="label">미리보기</div>
-        <div id="npPreview" class="md" style="border:1px solid var(--stroke);border-radius:14px;padding:12px;background:rgba(255,255,255,.04)"></div>
-      </div>
-    `,
-    footHtml: `
-      <button class="btn btn--ghost" type="button" id="npCancel">취소</button>
-      <button class="btn btn--primary" type="button" id="npPost">등록</button>
-    `,
-    onMount() {
-      el("npCat").value = state.cat !== "all" ? state.cat : "free";
-
-      const renderPrev = () => el("npPreview").innerHTML = renderMarkdown(el("npBody").value);
-      el("npBody").addEventListener("input", renderPrev);
-      renderPrev();
-
-      el("npCancel").addEventListener("click", closeModal);
-      el("npPost").addEventListener("click", async () => {
-        const category = el("npCat").value;
-        const title = el("npTitle").value.trim();
-        const bodyMd = el("npBody").value.trim();
-        const anonymous = el("npAnon").checked;
-
-        if (!title || !bodyMd) return toast("오류", "제목/본문을 입력해 주세요.");
-
-        try {
-          const r = await api("/posts", { method: "POST", body: { category, title, bodyMd, anonymous } });
-          toast("완료", "글을 올렸어요!");
-          closeModal();
-          await refreshFeed(true);
-          await openPost(r.postId);
-        } catch (e) {
-          toast("실패", e.message || "글 작성 실패");
-        }
-      });
-    }
-  });
-}
-
-/* -----------------------
-   Bookmarks modal
------------------------- */
-function openBookmarksModal() {
-  const b = getBookmarks();
-  const items = Object.values(b).sort((a, c) => (c.pinned - a.pinned) || (c.createdAt - a.createdAt));
-  const html = items.length
-    ? items.map((x) => `
-      <div class="item" tabindex="0" data-bm-open="${x.id}">
-        <div class="item__top">
-          <span class="tag">${escapeHtml(catName(x.category))}</span>
-          ${x.pinned ? `<span class="pin"><span class="icon" data-lucide="pin"></span>고정</span>` : ""}
-          <div class="item__right">
-            <button class="btn btn--ghost" type="button" data-bm-del="${x.id}">제거</button>
-          </div>
-        </div>
-        <div class="item__title">${escapeHtml(x.title)}</div>
-        <div class="item__meta">
-          <span>${escapeHtml(fmtTime(x.createdAt))}</span>
-          <span class="dot">•</span>
-          <span>${escapeHtml(relTime(x.createdAt))}</span>
-        </div>
-      </div>
-    `).join("")
-    : `<div class="muted">아직 북마크가 없어요. 피드에서 ★를 눌러 저장해 보세요.</div>`;
-
-  openModal({
-    title: "북마크",
-    bodyHtml: html,
-    footHtml: `<button class="btn btn--ghost" type="button" id="bmClose">닫기</button>`,
-    onMount() {
-      renderIcons();
-      el("bmClose").addEventListener("click", closeModal);
-
-      qsa("[data-bm-open]", $modalRoot).forEach((node) => {
-        const id = node.getAttribute("data-bm-open");
-        node.addEventListener("click", async () => {
-          closeModal();
-          await openPost(id);
-        });
-      });
-      qsa("[data-bm-del]", $modalRoot).forEach((btn) => {
-        btn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          const id = btn.getAttribute("data-bm-del");
-          const b2 = getBookmarks();
-          delete b2[id];
-          setBookmarks(b2);
-          toast("북마크", "제거했어요.");
-          closeModal();
-          openBookmarksModal();
-        });
-      });
-    }
-  });
-}
-
-/* -----------------------
-   My view (best-effort)
------------------------- */
-async function loadMyPosts() {
-  if (!state.me) return;
-  // 일반 유저: listPosts에서 canEdit=true인 것만 추려도 대부분 본인 글
-  // 단, admin은 canEdit이 모두 true라서 이 방식이 깨짐 → nickname 기반으로 필터
-  const isAdmin = state.me.role === "admin" || state.me.role === "mod";
-
-  $myList.innerHTML = `<div class="muted">불러오는 중…</div>`;
-  try {
-    const r = await api("/posts", { qsObj: { category: "all", sort: "latest", pageSize: 200 } });
-    let posts = r.posts || [];
-
-    if (isAdmin) {
-      posts = posts.filter(p => !p.anonymous && p.authorName === state.me.nickname);
-    } else {
-      posts = posts.filter(p => p.canEdit === true);
-    }
-
-    if (!posts.length) {
-      $myList.innerHTML = `<div class="muted">내 글이 아직 없어요.</div>`;
-      return;
-    }
-    $myList.innerHTML = posts.map(postCard).join("");
-    qsa("[data-open]", $myList).forEach((node) => {
-      node.addEventListener("click", () => openPost(node.getAttribute("data-open")));
-    });
-    qsa("[data-bm]", $myList).forEach((btn) => {
-      btn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const id = btn.getAttribute("data-bm");
-        const p = posts.find(x => x.id === id);
-        if (!p) return;
-        const on = toggleBookmark(p);
-        btn.classList.toggle("is-on", on);
-        renderIcons();
-      });
-    });
-    renderIcons();
-  } catch (e) {
-    $myList.innerHTML = `<div class="muted">불러오기 실패: ${escapeHtml(e.message || "")}</div>`;
-  }
-}
-
-async function loadMyComments() {
-  if (!state.me) return;
-
-  // 서버에 “내 댓글” 전용 API가 없어서
-  // (현재 스펙상) 댓글을 전체 수집할 방법이 없음.
-  // => “현재 열어본 글들에서 내가 남긴 댓글”만이라도 보여주는 방식으로, 기능을 ‘있는 척’ 하지 않게 명확히 표시.
-  const note = `
-    <div class="muted" style="margin-bottom:10px">
-      현재 서버 API에 “내 댓글 전체 조회” 엔드포인트가 없어, <b>내가 최근 열어본 글에서 남긴 댓글</b>만 모아 보여줘요.
-      (원하면 서버에 /me/comments 를 추가하면 100% 완벽하게 가능)
+    <div class="row">
+      <div class="muted">#~###### 제목 지원 / 테이블 / 체크박스 / 코드블럭 지원</div>
+      <div class="spacer"></div>
+      <button class="btn btn--ghost" id="wPreviewBtn" type="button">미리보기</button>
     </div>
-  `;
+    <div id="wPreview" class="md is-hidden"></div>
+  `, `
+    <button class="btn btn--ghost" type="button" data-close="1">취소</button>
+    <button class="btn btn--primary" id="wSubmit" type="button">${edit ? "수정 저장" : "등록"}</button>
+  `);
 
-  const cache = safeJson(sessionStorage.getItem("srt_seen_posts") || "{}") || {};
-  const ids = Object.keys(cache).slice(0, 20);
+  $("#wCat").value = initCat;
+  $("#wTitle").value = initTitle;
+  $("#wBody").value = initBody;
+  $("#wAnon").checked = initAnon;
 
-  if (!ids.length) {
-    $myList.innerHTML = note + `<div class="muted">아직 열어본 글이 없어요. 글을 몇 개 열어본 뒤 다시 확인해 보세요.</div>`;
-    return;
-  }
-
-  $myList.innerHTML = note + `<div class="muted">불러오는 중…</div>`;
-
-  try {
-    const out = [];
-    for (const pid of ids) {
-      const r = await api(`/posts/${pid}/comments`);
-      const cs = r.comments || [];
-      // 내 닉네임 & 비익명 기준
-      const mine = cs.filter(c => !c.anonymous && c.authorName === state.me.nickname);
-      for (const c of mine) out.push({ ...c, _postId: pid, _postTitle: cache[pid]?.title || pid });
-    }
-
-    if (!out.length) {
-      $myList.innerHTML = note + `<div class="muted">최근 열어본 글에서 내 댓글을 찾지 못했어요.</div>`;
-      return;
-    }
-
-    $myList.innerHTML = note + out.map((c) => `
-      <div class="item" tabindex="0" data-open="${c._postId}">
-        <div class="item__top">
-          <span class="tag">댓글</span>
-          <span class="pill">${escapeHtml(c._postTitle)}</span>
-          <div class="item__right">
-            <span class="pill">${escapeHtml(relTime(c.createdAt))}</span>
-          </div>
-        </div>
-        <div class="item__title">${escapeHtml((c.bodyMd || "").slice(0, 80))}${(c.bodyMd || "").length > 80 ? "…" : ""}</div>
-        <div class="muted" style="font-size:12px">클릭하면 해당 글로 이동</div>
-      </div>
-    `).join("");
-
-    qsa("[data-open]", $myList).forEach((node) => {
-      node.addEventListener("click", () => openPost(node.getAttribute("data-open")));
-    });
-  } catch (e) {
-    $myList.innerHTML = note + `<div class="muted">불러오기 실패: ${escapeHtml(e.message || "")}</div>`;
-  }
-}
-
-function saveSeenPost(post) {
-  const raw = sessionStorage.getItem("srt_seen_posts");
-  const obj = raw ? safeJson(raw) : {};
-  obj[post.id] = { title: post.title, at: Date.now() };
-  // 최신순 20개만 유지
-  const entries = Object.entries(obj).sort((a,b) => b[1].at - a[1].at).slice(0, 20);
-  const next = {};
-  for (const [k,v] of entries) next[k]=v;
-  sessionStorage.setItem("srt_seen_posts", JSON.stringify(next));
-}
-
-/* -----------------------
-   Admin view
------------------------- */
-function renderAdminSeg() {
-  const me = state.me;
-  const isAdmin = me && (me.role === "admin" || me.role === "mod");
-  // 관리 탭은 관리자에게만 의미 있음: 일반 유저는 클릭해도 안내
-  $segAdmin.disabled = !isAdmin;
-}
-async function loadReports() {
-  const me = state.me;
-  if (!me || !(me.role === "admin" || me.role === "mod")) {
-    return toast("권한 없음", "관리자만 볼 수 있어요.");
-  }
-  const status = $reportStatusSel.value || "open";
-  $reportList.innerHTML = `<div class="muted">불러오는 중…</div>`;
-  try {
-    const r = await api("/admin/reports", { qsObj: { status, limit: 200 } });
-    const reports = r.reports || [];
-    if (!reports.length) {
-      $reportList.innerHTML = `<div class="muted">신고가 없어요.</div>`;
-      return;
-    }
-    $reportList.innerHTML = reports.map((x) => `
-      <div class="item">
-        <div class="item__top">
-          <span class="tag">#${escapeHtml(x.status)}</span>
-          <span class="pill">${escapeHtml(x.targetType)} · ${escapeHtml(x.targetId)}</span>
-          <div class="item__right">
-            ${x.status === "open" ? `<button class="btn btn--primary" type="button" data-close="${x.id}">닫기</button>` : ""}
-          </div>
-        </div>
-        <div class="item__title">${escapeHtml(x.reason)}</div>
-        <div class="item__meta">
-          <span>신고자: ${escapeHtml(x.reporter)}</span>
-          <span class="dot">•</span>
-          <span>${escapeHtml(relTime(x.createdAt))}</span>
-        </div>
-        <div class="muted" style="margin-top:8px;white-space:pre-wrap">${escapeHtml(x.detail || "")}</div>
-        <div class="row" style="margin-top:10px">
-          <button class="btn btn--ghost" type="button" data-open-target="${escapeHtml(x.targetId)}">대상 열기</button>
-        </div>
-      </div>
-    `).join("");
-
-    qsa("[data-close]", $reportList).forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        const id = btn.getAttribute("data-close");
-        try {
-          await api(`/admin/reports/${id}/close`, { method: "POST" });
-          toast("처리됨", "신고를 closed로 변경했어요.");
-          await loadReports();
-        } catch (e) {
-          toast("실패", e.message || "처리 실패");
-        }
-      });
-    });
-
-    qsa("[data-open-target]", $reportList).forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        const tid = btn.getAttribute("data-open-target");
-        // post id인지 comment id인지 모르므로 우선 post로 시도
-        try {
-          await openPost(tid);
-          showView("post");
-        } catch {
-          toast("안내", "대상이 글이 아닐 수 있어요 (댓글 신고는 글에서 확인)");
-        }
-      });
-    });
-
-  } catch (e) {
-    $reportList.innerHTML = `<div class="muted">불러오기 실패: ${escapeHtml(e.message || "")}</div>`;
-  }
-}
-
-/* -----------------------
-   Navigation / Hash
------------------------- */
-function parseHash() {
-  const h = (location.hash || "").replace(/^#/, "");
-  const p = new URLSearchParams(h);
-  const postId = p.get("post");
-  return { postId };
-}
-
-/* -----------------------
-   Bind UI events
------------------------- */
-function bindUI() {
-  // Chips
-  qsa(".chip").forEach((b) => {
-    b.addEventListener("click", () => setCat(b.dataset.cat));
+  $("#wPreviewBtn").addEventListener("click", ()=>{
+    const box = $("#wPreview");
+    const on = box.classList.toggle("is-hidden") === false;
+    if (on) box.innerHTML = md($("#wBody").value);
   });
 
-  $sortSel.value = state.sort;
-  $sortSel.addEventListener("change", () => setSort($sortSel.value));
+  $("#wSubmit").addEventListener("click", async ()=>{
+    const category = $("#wCat").value;
+    const title = $("#wTitle").value.trim();
+    const bodyMd = $("#wBody").value.trim();
+    const anonymous = $("#wAnon").checked;
 
-  $qInput.value = state.q;
-  $searchBtn.addEventListener("click", () => setQ($qInput.value.trim()));
-  $qInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") setQ($qInput.value.trim());
-  });
+    if (!title || !bodyMd) return toast("제목/본문을 입력해줘");
 
-  $refreshBtn.addEventListener("click", () => refreshFeed(true));
-  $loadMoreBtn.addEventListener("click", () => refreshFeed(false));
-
-  $newPostBtn.addEventListener("click", openNewPostModal);
-  $fabBtn.addEventListener("click", openNewPostModal);
-
-  $themeBtn.addEventListener("click", () => {
-    toggleTheme();
-    renderIcons();
-  });
-
-  $bookmarksBtn.addEventListener("click", openBookmarksModal);
-
-  $homeBtn.addEventListener("click", () => {
-    showView("feed");
-    location.hash = "";
-  });
-
-  $backBtn.addEventListener("click", () => {
-    showView("feed");
-    location.hash = "";
-  });
-
-  // Seg
-  $segFeed.addEventListener("click", () => showView("feed"));
-  $segMy.addEventListener("click", async () => {
-    if (!state.me) return toast("로그인 필요", "내 활동은 로그인 후 이용할 수 있어요.");
-    showView("my");
-    state.myTab = "posts";
-    setMyTabUI();
-    await loadMyPosts();
-  });
-  $segAdmin.addEventListener("click", async () => {
-    const me = state.me;
-    if (!me || !(me.role === "admin" || me.role === "mod")) {
-      return toast("권한 없음", "관리자만 이용할 수 있어요.");
-    }
-    showView("admin");
-    await loadReports();
-  });
-
-  // My view buttons
-  $myPostsBtn.addEventListener("click", async () => {
-    state.myTab = "posts";
-    setMyTabUI();
-    await loadMyPosts();
-  });
-  $myCommentsBtn.addEventListener("click", async () => {
-    state.myTab = "comments";
-    setMyTabUI();
-    await loadMyComments();
-  });
-  $myReloadBtn.addEventListener("click", async () => {
-    if (state.myTab === "posts") await loadMyPosts();
-    else await loadMyComments();
-  });
-
-  // Admin buttons
-  $adminLoadReportsBtn.addEventListener("click", loadReports);
-  $adminReloadBtn.addEventListener("click", loadReports);
-
-  // Comment preview
-  $commentPreviewBtn.addEventListener("click", () => {
-    const on = $commentPreview.classList.contains("is-hidden");
-    if (on) {
-      $commentPreview.innerHTML = renderMarkdown($commentInput.value);
-      $commentPreview.classList.remove("is-hidden");
-    } else {
-      $commentPreview.classList.add("is-hidden");
-    }
-  });
-
-  $commentSendBtn.addEventListener("click", sendComment);
-  bindCommentEnter();
-
-  // Hash navigation
-  window.addEventListener("hashchange", async () => {
-    const { postId } = parseHash();
-    if (postId) await openPost(postId);
-  });
-
-  // prevent “search button shifting” by never animating its width/position
-}
-
-/* My tab UI */
-function setMyTabUI() {
-  $myPostsBtn.classList.toggle("is-active", state.myTab === "posts");
-  $myCommentsBtn.classList.toggle("is-active", state.myTab === "comments");
-}
-
-/* -----------------------
-   Boot: real init flow
------------------------- */
-async function init() {
-  initTheme();
-  setupMarkdown();
-  renderIcons();
-
-  const boot = bootRandomizer();
-
-  // Step 1: server health
-  boot.setRealStep(0);
-  try {
-    await api("/health");
-  } catch (e) {
-    banner("서버 연결 실패: API 주소 또는 네트워크를 확인해 주세요.");
-  }
-
-  // Step 2: session check
-  boot.setRealStep(1);
-  loadSession();
-  renderUserBox();
-
-  if (localStorage.getItem(LS.token)) {
-    try {
-      const me = await api("/auth/me");
-      // /auth/me 응답 {ok:true,user:{...}}
-      if (me?.user) {
-        setSession(localStorage.getItem(LS.token), me.user);
+    try{
+      if (!edit){
+        const r = await api("/posts", { method:"POST", body:{ category, title, bodyMd, anonymous } });
+        closeModal();
+        toast("글 등록 완료!");
+        await loadFeed(true);
+        await openPost(r.postId);
+      } else {
+        await api(`/posts/${p.id}`, { method:"PATCH", body:{ category, title, bodyMd, anonymous } });
+        closeModal();
+        toast("수정 완료!");
+        await openPost(p.id);
+        await loadFeed(true);
       }
-    } catch {
-      // 토큰 만료/무효
-      clearSession();
+    } catch(e){
+      toast("실패: " + e.message);
     }
-  }
-
-  renderAdminSeg();
-
-  // Step 3: feed fetch
-  boot.setRealStep(2);
-  // 초기 UI 상태 세팅
-  $qInput.value = state.q;
-  $sortSel.value = state.sort;
-  qsa(".chip").forEach((b) => b.classList.toggle("is-active", b.dataset.cat === state.cat));
-
-  // WS
-  connectWS();
-
-  // Initial feed load
-  await refreshFeed(true);
-
-  // finish boot
-  await boot.finish("완료!");
-  renderIcons();
-
-  // If hash has post, open
-  const { postId } = parseHash();
-  if (postId) await openPost(postId);
-  else showView("feed");
+  });
 }
 
-/* -----------------------
-   Global click: login button (re-rendered)
------------------------- */
-document.addEventListener("click", (e) => {
-  const t = e.target;
-  if (t && t.id === "loginBtn") openLoginModal();
+/* ---------- Post actions ---------- */
+$postLikeBtn.addEventListener("click", async ()=>{
+  if (!requireLogin()) return;
+  if (!currentPost) return;
+  try{
+    const r = await api("/likes/toggle", { method:"POST", body:{ targetType:"post", targetId: currentPost.id } });
+    toast(r.liked ? "좋아요!" : "좋아요 취소");
+    await openPost(currentPost.id);
+    await loadFeed(true);
+  } catch(e){
+    toast("실패: " + e.message);
+  }
 });
 
-/* -----------------------
-   Extra: keep seen post cache
------------------------- */
-const _openPostOriginal = openPost;
-openPost = async function(postId) {
-  await _openPostOriginal(postId);
-  if (state.currentPost) saveSeenPost(state.currentPost);
-};
+$postReportBtn.addEventListener("click", ()=>{
+  if (!requireLogin()) return;
+  if (!currentPost) return;
 
-/* -----------------------
-   Start
------------------------- */
-bindUI();
-init();
+  openModal("신고하기", `
+    <div class="muted">운영 규칙 위반/스팸/괴롭힘/불법 등 신고 사유를 선택하고 상세를 적어주세요.</div>
+    <div class="select">
+      <label class="select__label" for="rpReason">사유</label>
+      <select id="rpReason" class="select__box">
+        <option>스팸/광고</option>
+        <option>욕설/혐오</option>
+        <option>불법/위험</option>
+        <option>개인정보 노출</option>
+        <option>기타</option>
+      </select>
+    </div>
+    <textarea id="rpDetail" class="textarea" rows="5" placeholder="상세 내용"></textarea>
+  `, `
+    <button class="btn btn--ghost" data-close="1" type="button">취소</button>
+    <button class="btn btn--primary" id="rpSubmit" type="button">신고 제출</button>
+  `);
+
+  $("#rpSubmit").addEventListener("click", async ()=>{
+    try{
+      await api("/reports", { method:"POST", body:{
+        targetType:"post",
+        targetId: currentPost.id,
+        reason: $("#rpReason").value,
+        detail: $("#rpDetail").value.trim()
+      }});
+      closeModal();
+      toast("신고가 접수됐어요.");
+    } catch(e){
+      toast("신고 실패: " + e.message);
+    }
+  });
+});
+
+$postBookmarkBtn.addEventListener("click", ()=>{
+  if (!currentPost) return;
+  const on = toggleBookmark(currentPost);
+  $postBookmarkBtn.querySelector(".icon")?.style && ($postBookmarkBtn.querySelector(".icon").style.opacity = on ? "1":"0.55");
+  renderIcons();
+});
+
+$postPinBtn.addEventListener("click", async ()=>{
+  if (!requireLogin()) return;
+  if (!currentPost) return;
+  try{
+    const r = await api(`/posts/${currentPost.id}/pin`, { method:"POST" });
+    toast(r.pinned ? "고정됨" : "고정 해제됨");
+    await openPost(currentPost.id);
+    await loadFeed(true);
+  } catch(e){
+    toast("실패: " + e.message);
+  }
+});
+
+$postEditBtn.addEventListener("click", ()=> openWriteModal(true));
+
+$postDeleteBtn.addEventListener("click", ()=>{
+  if (!requireLogin()) return;
+  if (!currentPost) return;
+
+  openModal("삭제 확인", `
+    <div class="muted">이 글을 삭제하면 피드에서 제거됩니다. (관리자/모더레이터만)</div>
+  `, `
+    <button class="btn btn--ghost" data-close="1" type="button">취소</button>
+    <button class="btn btn--danger" id="doDelete" type="button">삭제</button>
+  `);
+
+  $("#doDelete").addEventListener("click", async ()=>{
+    try{
+      await api(`/posts/${currentPost.id}`, { method:"DELETE" });
+      closeModal();
+      toast("삭제 완료");
+      showFeed();
+      await loadFeed(true);
+    } catch(e){
+      toast("삭제 실패: " + e.message);
+    }
+  });
+});
+
+/* ---------- Comment composer ---------- */
+$commentPreviewBtn.addEventListener("click", ()=>{
+  const on = $commentPreview.classList.toggle("is-hidden") === false;
+  if (on) $commentPreview.innerHTML = md($commentInput.value);
+});
+$commentInput.addEventListener("keydown", (e)=>{
+  if (e.key === "Enter" && !e.shiftKey){
+    e.preventDefault();
+    $commentSendBtn.click();
+  }
+});
+$commentSendBtn.addEventListener("click", async ()=>{
+  if (!requireLogin()) return;
+  if (!currentPost) return;
+  const bodyMd = $commentInput.value.trim();
+  const anonymous = $commentAnon.checked;
+  if (!bodyMd) return toast("댓글 내용을 입력해줘");
+  try{
+    await api(`/posts/${currentPost.id}/comments`, { method:"POST", body:{ bodyMd, anonymous } });
+    $commentInput.value = "";
+    $commentPreview.classList.add("is-hidden");
+    toast("댓글 등록!");
+    await openPost(currentPost.id);
+    await loadFeed(true);
+  } catch(e){
+    toast("댓글 실패: " + e.message);
+  }
+});
+
+/* ---------- Bookmarks view ---------- */
+function openBookmarks(){
+  const items = Object.values(state.bookmarks).sort((a,b)=> (b.createdAt||0)-(a.createdAt||0));
+  openModal("북마크", `
+    <div class="muted">기기(localStorage)에 저장됩니다.</div>
+    <div style="margin-top:10px; display:flex; flex-direction:column; gap:10px">
+      ${items.length ? items.map(p=>`
+        <div class="item" data-bmopen="${p.id}" tabindex="0">
+          <div class="item__top">
+            <span class="tag">${escapeHtml(catLabel(p.category))}</span>
+            ${p.pinned ? `<span class="pin"><span class="icon" data-lucide="pin"></span>고정</span>`:""}
+            <span class="pill">${escapeHtml(p.authorName||"")}</span>
+            <span class="pill">${escapeHtml(relTime(p.createdAt))}</span>
+            <div class="item__right">
+              <button class="btn btn--danger" data-bmremove="${p.id}" type="button">삭제</button>
+            </div>
+          </div>
+          <div class="item__title">${escapeHtml(p.title||"")}</div>
+        </div>
+      `).join("") : `<div class="card" style="padding:14px">북마크가 비어있어요.</div>`}
+    </div>
+  `, `
+    <button class="btn btn--ghost" data-close="1" type="button">닫기</button>
+  `);
+
+  $$("[data-bmopen]").forEach(el=>{
+    el.addEventListener("click", ()=>{
+      const id = el.getAttribute("data-bmopen");
+      closeModal();
+      openPost(id);
+    });
+  });
+  $$("[data-bmremove]").forEach(btn=>{
+    btn.addEventListener("click", (e)=>{
+      e.stopPropagation();
+      const id = btn.getAttribute("data-bmremove");
+      delete state.bookmarks[id];
+      saveBookmarks();
+      toast("삭제됨");
+      closeModal();
+      openBookmarks();
+    });
+  });
+
+  renderIcons();
+}
+
+/* ---------- Activity (me posts/comments) ---------- */
+async function openActivity(){
+  if (!requireLogin()) return;
+
+  openModal("내 활동", `
+    <div class="row" style="gap:10px; flex-wrap:wrap">
+      <button class="btn btn--ghost" id="tabMyPosts" type="button">내 글</button>
+      <button class="btn btn--ghost" id="tabMyComments" type="button">내 댓글</button>
+      <div class="spacer"></div>
+      <span class="muted">API: /me/posts, /me/comments</span>
+    </div>
+    <div id="actList" style="margin-top:12px; display:flex; flex-direction:column; gap:10px">
+      <div class="muted">불러오는 중…</div>
+    </div>
+  `, `<button class="btn btn--ghost" data-close="1" type="button">닫기</button>`);
+
+  const $actList = $("#actList");
+
+  async function loadMyPosts(){
+    $actList.innerHTML = `<div class="muted">내 글 불러오는 중…</div>`;
+    try{
+      const r = await api("/me/posts", { qsObj:{ sort:"latest", pageSize:100 }});
+      const posts = r.posts || [];
+      if (!posts.length) { $actList.innerHTML = `<div class="card" style="padding:14px">내 글이 아직 없어요.</div>`; return; }
+      $actList.innerHTML = posts.map(postCard).join("");
+      $$("[data-open]", $actList).forEach(el=> el.addEventListener("click", ()=>{ closeModal(); openPost(el.getAttribute("data-open")); }));
+      $$("[data-bm]", $actList).forEach(btn=>{
+        btn.addEventListener("click",(e)=>{
+          e.stopPropagation();
+          const id = btn.getAttribute("data-bm");
+          const p = posts.find(x=>x.id===id);
+          if(!p) return;
+          const on = toggleBookmark(p);
+          btn.querySelector(".icon").style.opacity = on ? "1":"0.55";
+          renderIcons();
+        });
+      });
+      renderIcons();
+    } catch(e){
+      $actList.innerHTML = `<div class="card" style="padding:14px">실패: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  async function loadMyComments(){
+    $actList.innerHTML = `<div class="muted">내 댓글 불러오는 중…</div>`;
+    try{
+      const r = await api("/me/comments", { qsObj:{ pageSize:100 }});
+      const cs = r.comments || [];
+      if (!cs.length) { $actList.innerHTML = `<div class="card" style="padding:14px">내 댓글이 아직 없어요.</div>`; return; }
+      $actList.innerHTML = cs.map(c=>`
+        <div class="item" data-open="${c.postId}" tabindex="0">
+          <div class="item__top">
+            <span class="tag">댓글</span>
+            ${c.post?.pinned ? `<span class="pin"><span class="icon" data-lucide="pin"></span>고정</span>`:""}
+            <span class="pill">${escapeHtml(catLabel(c.post?.category))}</span>
+            <span class="pill">${escapeHtml(relTime(c.createdAt))}</span>
+          </div>
+          <div class="item__title">${escapeHtml(c.post?.title || "글로 이동")}</div>
+          <div class="item__meta">${escapeHtml((c.bodyMd||"").slice(0,120))}${(c.bodyMd||"").length>120?"…":""}</div>
+        </div>
+      `).join("");
+      $$("[data-open]", $actList).forEach(el=> el.addEventListener("click", ()=>{ closeModal(); openPost(el.getAttribute("data-open")); }));
+      renderIcons();
+    } catch(e){
+      $actList.innerHTML = `<div class="card" style="padding:14px">실패: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  $("#tabMyPosts").addEventListener("click", loadMyPosts);
+  $("#tabMyComments").addEventListener("click", loadMyComments);
+
+  loadMyPosts();
+}
+
+/* ---------- Admin Reports ---------- */
+async function openAdminReports(){
+  if (!requireLogin()) return;
+  if (!isAdminRole(state.me?.role)) return toast("관리자/모더레이터만 가능");
+
+  openModal("신고함(관리자)", `
+    <div class="row" style="gap:10px; flex-wrap:wrap">
+      <button class="btn btn--ghost" id="rpOpen" type="button">미처리</button>
+      <button class="btn btn--ghost" id="rpClosed" type="button">처리됨</button>
+      <button class="btn btn--ghost" id="rpAll" type="button">전체</button>
+      <div class="spacer"></div>
+      <span class="muted">/admin/reports</span>
+    </div>
+    <div id="rpList" style="margin-top:12px; display:flex; flex-direction:column; gap:10px">
+      <div class="muted">불러오는 중…</div>
+    </div>
+  `, `<button class="btn btn--ghost" data-close="1" type="button">닫기</button>`);
+
+  const $rpList = $("#rpList");
+
+  async function load(status){
+    $rpList.innerHTML = `<div class="muted">불러오는 중…</div>`;
+    try{
+      const r = await api("/admin/reports", { qsObj:{ status, pageSize:200 }});
+      const rs = r.reports || [];
+      if (!rs.length) { $rpList.innerHTML = `<div class="card" style="padding:14px">신고가 없어요.</div>`; return; }
+
+      $rpList.innerHTML = rs.map(x=>`
+        <div class="comment">
+          <div class="comment__meta">
+            <span class="pill">${escapeHtml(x.status)}</span>
+            <span class="pill">${escapeHtml(x.target_type)}:${escapeHtml(x.target_id)}</span>
+            <span class="pill">신고자: ${escapeHtml(x.reporter_nick)}</span>
+            <span class="pill">${escapeHtml(relTime(x.created_at))}</span>
+            <div class="spacer"></div>
+            ${x.status==="open" ? `<button class="btn btn--primary" data-closeReport="${x.id}" type="button">처리</button>` : ``}
+            <button class="btn btn--ghost" data-openTarget="${x.target_type}:${x.target_id}" type="button">대상 열기</button>
+          </div>
+          <div style="margin-top:8px"><b>${escapeHtml(x.reason)}</b></div>
+          <div class="muted" style="margin-top:6px; white-space:pre-wrap">${escapeHtml(x.detail)}</div>
+        </div>
+      `).join("");
+
+      $$("[data-openTarget]", $rpList).forEach(btn=>{
+        btn.addEventListener("click", ()=>{
+          const v = btn.getAttribute("data-openTarget");
+          const [t,id] = v.split(":");
+          if (t==="post") { closeModal(); openPost(id); }
+          else toast("comment 대상 열기는 현재 버전에서 post로 이동만 지원");
+        });
+      });
+
+      $$("[data-closeReport]", $rpList).forEach(btn=>{
+        btn.addEventListener("click", async ()=>{
+          const id = btn.getAttribute("data-closeReport");
+          try{
+            await api(`/admin/reports/${id}/close`, { method:"POST" });
+            toast("처리됨");
+            load(status);
+          } catch(e){
+            toast("실패: " + e.message);
+          }
+        });
+      });
+
+    } catch(e){
+      $rpList.innerHTML = `<div class="card" style="padding:14px">실패: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  $("#rpOpen").addEventListener("click", ()=>load("open"));
+  $("#rpClosed").addEventListener("click", ()=>load("closed"));
+  $("#rpAll").addEventListener("click", ()=>load("all"));
+
+  load("open");
+}
+
+/* ---------- Realtime (WebSocket) ---------- */
+let ws = null;
+function connectRealtime(){
+  try{
+    if (ws) { ws.close(); ws = null; }
+    const u = new URL(API_BASE + "/realtime");
+    u.searchParams.set("channel","feed");
+    const wsu = u.toString().replace("https://","wss://").replace("http://","ws://");
+
+    ws = new WebSocket(wsu);
+
+    ws.onopen = ()=>{
+      state.ws.ok = true;
+      $rtLabel.textContent = "실시간: 연결됨";
+      $rtMeta.textContent = "—";
+      $rtDot.parentElement.classList.add("is-on");
+    };
+
+    ws.onmessage = (evt)=>{
+      state.ws.lastTs = Date.now();
+      try{
+        const msg = JSON.parse(evt.data);
+        if (msg?.payload?.kind) {
+          // lightweight: refresh feed if on feed view
+          if (!$feedView.classList.contains("is-hidden")) {
+            loadFeed(true);
+          }
+        }
+      } catch {}
+    };
+
+    ws.onclose = ()=>{
+      state.ws.ok = false;
+      $rtLabel.textContent = "실시간: 연결 끊김";
+      $rtMeta.textContent = "재연결 시도…";
+      $rtDot.parentElement.classList.remove("is-on");
+      setTimeout(connectRealtime, 1200 + Math.random()*900);
+    };
+    ws.onerror = ()=>{
+      try{ ws.close(); }catch{}
+    };
+
+    // ping
+    setInterval(()=>{ try{ if (ws && ws.readyState===1) ws.send("ping"); }catch{} }, 8000);
+  } catch {
+    $rtLabel.textContent = "실시간: 실패";
+    $rtMeta.textContent = "—";
+  }
+}
+
+/* ---------- Events ---------- */
+$themeBtn.addEventListener("click", ()=>{
+  const cur = document.documentElement.dataset.theme || "dark";
+  applyTheme(cur === "dark" ? "light" : "dark");
+});
+$bookmarksBtn.addEventListener("click", openBookmarks);
+$activityBtn.addEventListener("click", openActivity);
+
+$searchBtn.addEventListener("click", ()=>{
+  state.q = $qInput.value.trim();
+  loadFeed(true);
+});
+$qInput.addEventListener("keydown", (e)=>{
+  if (e.key==="Enter") $searchBtn.click();
+});
+
+$sortSel.addEventListener("change", ()=>{
+  state.sort = $sortSel.value;
+  loadFeed(true);
+});
+
+$chips.forEach(btn=>{
+  btn.addEventListener("click", ()=>{
+    $chips.forEach(x=>x.classList.remove("is-active"));
+    btn.classList.add("is-active");
+    state.category = btn.dataset.cat;
+    loadFeed(true);
+  });
+});
+
+$refreshBtn.addEventListener("click", ()=> loadFeed(true));
+$loadMoreBtn.addEventListener("click", ()=> loadFeed(false));
+$newPostBtn.addEventListener("click", ()=> openWriteModal(false));
+$fabBtn.addEventListener("click", ()=> openWriteModal(false));
+$backBtn.addEventListener("click", showFeed);
+$homeBtn.addEventListener("click", ()=>{ showFeed(); loadFeed(true); });
+
+/* ---------- Init ---------- */
+(async function init(){
+  initTheme();
+  renderIcons();
+  await boot();
+
+  // restore me if exists
+  try { state.me = JSON.parse(localStorage.getItem(LS.me) || "null"); } catch { state.me = null; }
+  renderUserBox();
+
+  await refreshMe();
+
+  // init sort selector
+  $sortSel.value = state.sort;
+
+  // realtime
+  connectRealtime();
+
+  // first load
+  await loadFeed(true);
+
+  banner("베타 테스트 오픈! 불편/버그는 신고 또는 공지 댓글로 알려줘요.");
+})();
