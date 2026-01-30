@@ -13,90 +13,73 @@
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
 
-  <!-- Icons (fix: lucide is not defined) -->
+  <!-- Lucide Icons (fix: lucide is not defined) -->
   <script src="https://unpkg.com/lucide@latest"></script>
 </head>
 <body>
-  <!-- Loading Overlay -->
-  <div id="boot" class="boot" aria-hidden="false">
+  <!-- Fullscreen Loading (glass + aurora bar + bubbles + dots) -->
+  <div id="boot" class="boot">
     <div class="boot__bg">
       <div class="boot__blob boot__blob--a"></div>
       <div class="boot__blob boot__blob--b"></div>
       <div class="boot__grid"></div>
-      <div class="boot__noise"></div>
     </div>
 
-    <div class="boot__card" role="status" aria-live="polite">
-      <div class="boot__brand">
-        <div class="boot__logo" aria-hidden="true">S</div>
-        <div class="boot__title">
-          <div class="boot__name">SRT Community</div>
-          <div class="boot__sub">베타 · 연결 준비 중</div>
-        </div>
+    <div class="boot__card">
+      <div class="boot__ring" aria-hidden="true"></div>
+      <div class="boot__title">
+        로딩 중<span class="boot__dots" aria-hidden="true"><i></i><i></i><i></i></span>
       </div>
 
-      <div class="boot__spinnerRow">
-        <div class="boot__spinner" aria-hidden="true"></div>
-        <div class="boot__loadingText">
-          로딩 중<span class="dots" aria-hidden="true"><i>.</i><i>.</i><i>.</i></span>
-        </div>
-      </div>
-
-      <div class="boot__progress">
+      <div class="boot__barWrap">
         <div class="boot__bar">
-          <div id="bootBar" class="boot__barFill"></div>
-          <div class="boot__bubbles" aria-hidden="true">
-            <span></span><span></span><span></span><span></span><span></span>
-          </div>
+          <div class="boot__fill" id="bootFill"></div>
+          <div class="boot__bubbles" id="bootBubbles"></div>
         </div>
         <div class="boot__pct"><span id="bootPct">0</span>%</div>
       </div>
 
-      <div class="boot__taskBox">
-        <div class="boot__taskTitle">진행 상황</div>
-        <div id="bootTask" class="boot__task">초기화 중…</div>
-      </div>
-
-      <div class="boot__hint">
-        팁: 북마크(★)는 브라우저에 저장돼요 · Markdown: <code>#</code> ~ <code>######</code> 지원
-      </div>
+      <div class="boot__log" id="bootLog">초기화 중…</div>
     </div>
   </div>
 
   <!-- Background -->
-  <div class="bg" aria-hidden="true">
+  <div class="bg">
     <div class="bg__blob bg__blob--a"></div>
     <div class="bg__blob bg__blob--b"></div>
     <div class="bg__grid"></div>
-    <div class="bg__noise"></div>
   </div>
 
-  <!-- Topbar -->
   <header class="topbar">
     <div class="container topbar__inner">
-      <button class="brand" id="homeBtn" type="button" aria-label="홈">
+      <div class="brand" id="homeBtn" role="button" tabindex="0" aria-label="홈으로">
         <div class="brand__logo" aria-hidden="true">S</div>
         <div class="brand__text">
           <div class="brand__title">SRT Community</div>
           <div class="brand__sub">읽기는 누구나 · 쓰기는 로그인 필요</div>
         </div>
-      </button>
+      </div>
 
       <div class="topbar__right">
         <div class="rt" title="실시간 상태">
           <span class="rt__dot" id="rtDot" aria-hidden="true"></span>
-          <span class="rt__label" id="rtLabel">실시간: 연결 준비</span>
+          <span class="rt__label" id="rtLabel">실시간: 연결 대기</span>
           <span class="rt__meta" id="rtMeta">—</span>
         </div>
 
+        <button class="btn btn--ghost" id="themeBtn" type="button">
+          <span class="icon" data-lucide="moon"></span>
+          <span class="hide-sm">테마</span>
+        </button>
+
         <button class="btn btn--ghost" id="bookmarksBtn" type="button">
-          <span class="icon" data-lucide="star"></span>
+          <span class="icon" data-lucide="bookmark"></span>
           <span class="hide-sm">북마크</span>
         </button>
 
-        <button class="btn btn--ghost" id="themeBtn" type="button" aria-label="테마 전환">
-          <span class="icon" data-lucide="moon-star"></span>
-          <span class="hide-sm">테마</span>
+        <button class="btn btn--ghost" id="activityBtn" type="button">
+          <span class="icon" data-lucide="user"></span>
+          <span class="hide-sm">내 활동</span>
         </button>
 
         <div class="userbox" id="userBox">
@@ -122,8 +105,7 @@
           <div class="search">
             <input id="qInput" class="input" placeholder="검색 (제목/내용)" autocomplete="off" />
             <button class="btn btn--ghost" id="searchBtn" type="button">
-              <span class="icon" data-lucide="search"></span>
-              <span>검색</span>
+              <span class="icon" data-lucide="search"></span> 검색
             </button>
           </div>
 
@@ -142,30 +124,12 @@
       <div class="toolbar__row toolbar__row--sub">
         <div class="hint">
           <span class="badge">TIP</span>
-          <span>이미지/동영상은 외부 링크를 Markdown으로 붙여넣기: <code>![](링크)</code></span>
+          <span>이미지/동영상은 외부 링크를 Markdown으로: <code>![](링크)</code></span>
         </div>
 
         <div class="toolbar__subright">
-          <button class="btn btn--ghost" id="refreshBtn" type="button">
-            <span class="icon" data-lucide="refresh-cw"></span>
-            <span>새로고침</span>
-          </button>
-          <button class="btn btn--primary" id="newPostBtn" type="button">
-            <span class="icon" data-lucide="plus"></span>
-            <span>새 글</span>
-          </button>
-        </div>
-      </div>
-
-      <div class="toolbar__row toolbar__row--sub2">
-        <div class="seg" role="tablist" aria-label="보기">
-          <button class="seg__btn is-active" id="segFeed" type="button">피드</button>
-          <button class="seg__btn" id="segMy" type="button" title="로그인 필요">내 활동</button>
-          <button class="seg__btn" id="segAdmin" type="button" title="관리자 전용">관리</button>
-        </div>
-
-        <div class="toolbar__subright">
-          <div class="mini" id="meMini"></div>
+          <button class="btn btn--ghost" id="refreshBtn" type="button">새로고침</button>
+          <button class="btn btn--primary" id="newPostBtn" type="button">+ 새 글</button>
         </div>
       </div>
     </section>
@@ -173,7 +137,7 @@
     <!-- Banner -->
     <div id="banner" class="banner is-hidden" role="status" aria-live="polite"></div>
 
-    <!-- Feed View -->
+    <!-- Feed -->
     <section id="feedView" class="view">
       <div class="feedHead">
         <div class="feedHead__left">
@@ -193,33 +157,21 @@
       </div>
     </section>
 
-    <!-- Post View -->
+    <!-- Post Detail -->
     <section id="postView" class="view is-hidden">
       <div class="postTop">
-        <button class="btn btn--ghost" id="backBtn" type="button">
-          <span class="icon" data-lucide="arrow-left"></span>
-          <span>목록</span>
-        </button>
+        <button class="btn btn--ghost" id="backBtn" type="button">← 목록</button>
         <div class="postTop__right">
-          <button class="btn btn--ghost" id="postBookmarkBtn" type="button" title="북마크">
-            <span class="icon" data-lucide="star"></span>
+          <button class="btn btn--ghost" id="postBookmarkBtn" type="button">
+            <span class="icon" data-lucide="bookmark"></span> 북마크
           </button>
           <button class="btn btn--ghost" id="postLikeBtn" type="button">👍 좋아요</button>
           <button class="btn btn--ghost" id="postReportBtn" type="button">🚩 신고</button>
-
-          <button class="btn btn--ghost is-hidden" id="postPinBtn" type="button" title="공지 고정 토글">
-            <span class="icon" data-lucide="pin"></span>
-            <span class="hide-sm">고정</span>
+          <button class="btn btn--ghost is-hidden" id="postPinBtn" type="button">
+            <span class="icon" data-lucide="pin"></span> 고정
           </button>
-
-          <button class="btn btn--ghost is-hidden" id="postEditBtn" type="button">
-            <span class="icon" data-lucide="pencil"></span>
-            <span class="hide-sm">수정</span>
-          </button>
-          <button class="btn btn--danger is-hidden" id="postDeleteBtn" type="button">
-            <span class="icon" data-lucide="trash-2"></span>
-            <span class="hide-sm">삭제</span>
-          </button>
+          <button class="btn btn--ghost is-hidden" id="postEditBtn" type="button">✏️ 수정</button>
+          <button class="btn btn--danger is-hidden" id="postDeleteBtn" type="button">🗑️ 삭제</button>
         </div>
       </div>
 
@@ -251,93 +203,26 @@
               <span>익명</span>
             </label>
             <div class="spacer"></div>
-            <button class="btn btn--ghost" id="commentPreviewBtn" type="button">
-              <span class="icon" data-lucide="eye"></span>
-              <span>미리보기</span>
-            </button>
+            <button class="btn btn--ghost" id="commentPreviewBtn" type="button">미리보기</button>
           </div>
-
           <textarea id="commentInput" class="textarea" rows="3"
             placeholder="Markdown 지원: **굵게**, #~###### 제목, > 인용, ```코드```, ![](이미지링크)"></textarea>
-
           <div class="row">
             <div class="muted">Shift+Enter 줄바꿈 / Enter 전송</div>
             <div class="spacer"></div>
             <button class="btn btn--primary" id="commentSendBtn" type="button">댓글 등록</button>
           </div>
-
           <div id="commentPreview" class="md is-hidden"></div>
         </div>
 
         <div id="commentList" class="commentList"></div>
       </section>
     </section>
-
-    <!-- My View -->
-    <section id="myView" class="view is-hidden">
-      <div class="feedHead">
-        <div class="feedHead__left">
-          <h2 class="h2">내 활동</h2>
-          <div class="muted">로그인한 계정 기준 · 익명 글/댓글은 일부 필터링이 제한될 수 있어요</div>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="row">
-          <button class="btn btn--ghost is-active" id="myPostsBtn" type="button">내 글</button>
-          <button class="btn btn--ghost" id="myCommentsBtn" type="button">내 댓글</button>
-          <div class="spacer"></div>
-          <button class="btn btn--ghost" id="myReloadBtn" type="button">
-            <span class="icon" data-lucide="refresh-cw"></span>
-            <span>갱신</span>
-          </button>
-        </div>
-        <div id="myList" class="list list--compact"></div>
-      </div>
-    </section>
-
-    <!-- Admin View -->
-    <section id="adminView" class="view is-hidden">
-      <div class="feedHead">
-        <div class="feedHead__left">
-          <h2 class="h2">관리자</h2>
-          <div class="muted">신고 목록 · 처리</div>
-        </div>
-        <div class="feedHead__right">
-          <button class="btn btn--ghost" id="adminReloadBtn" type="button">
-            <span class="icon" data-lucide="refresh-cw"></span>
-            <span>갱신</span>
-          </button>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="row">
-          <div class="select">
-            <label class="select__label" for="reportStatusSel">상태</label>
-            <select id="reportStatusSel" class="select__box">
-              <option value="open">open</option>
-              <option value="closed">closed</option>
-            </select>
-          </div>
-          <div class="spacer"></div>
-          <button class="btn btn--primary" id="adminLoadReportsBtn" type="button">신고 불러오기</button>
-        </div>
-
-        <div id="reportList" class="list list--compact"></div>
-      </div>
-    </section>
   </main>
 
-  <!-- Floating action -->
-  <button class="fab" id="fabBtn" type="button" aria-label="새 글쓰기">
-    <span class="icon" data-lucide="feather"></span>
-  </button>
+  <button class="fab" id="fabBtn" type="button" aria-label="새 글쓰기">✍️</button>
 
-  <!-- Modal root -->
   <div id="modalRoot" class="modalRoot is-hidden" aria-hidden="true"></div>
-
-  <!-- Toast -->
   <div id="toastRoot" class="toastRoot" aria-live="polite" aria-atomic="true"></div>
 
   <script defer src="./app.js"></script>
