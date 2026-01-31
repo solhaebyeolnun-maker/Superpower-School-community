@@ -5,6 +5,16 @@
 
 const API_BASE = "https://srt-community-api.yekong0728.workers.dev";
 
+// ===== role helpers (MUST be defined before use) =====
+function isAdminRole(user) {
+  const role = (user && user.role) ? String(user.role).toLowerCase() : "";
+  return role === "admin" || role === "mod";
+}
+
+function isLoggedIn(user) {
+  return !!(user && user.id);
+}
+
 /* ---------- DOM helpers ---------- */
 const $ = (sel, el=document) => el.querySelector(sel);
 const $$ = (sel, el=document) => Array.from(el.querySelectorAll(sel));
