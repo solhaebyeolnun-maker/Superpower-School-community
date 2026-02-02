@@ -1,1161 +1,1078 @@
-/* ===========================
-   SRT Community - app.js
-   Static (GitHub Pages) + Cloudflare Worker API + D1
-=========================== */
+// app.js
+const API_BASE = "https://srt-community-api.yekong0728.workers.dev"; // ✅ 여기 맞춰!
 
-const API_BASE = "https://srt-community-api.yekong0728.workers.dev";
+/* ------------------------ DOM helpers ------------------------ */
+const $ = (sel) => document.querySelector(sel);
+const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
-// ===== role helpers (MUST be defined before use) =====
-function isAdminRole(user) {
-  const role = (user && user.role) ? String(user.role).toLowerCase() : "";
-  return role === "admin" || role === "mod";
-}
-
-function isLoggedIn(user) {
-  return !!(user && user.id);
-}
-
-/* ---------- DOM helpers ---------- */
-const $ = (sel, el=document) => el.querySelector(sel);
-const $$ = (sel, el=document) => Array.from(el.querySelectorAll(sel));
-const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
-
-/* ---------- State / Storage ---------- */
-const LS = {
-  theme: "srt.theme",
-  token: "srt.token",
-  me: "srt.me",
-  bookmarks: "srt.bookmarks" // { [postId]: postSummary }
-};
-
-const state = {
-  category: "all",
-  sort: "latest",
-  q: "",
-  cursor: "",
-  loading: false,
-  list: [],
-  me: null,
-  token: localStorage.getItem(LS.token) || "",
-  bookmarks: loadBookmarks(),
-  ws: { ok:false, lastTs:0 }
-};
-
-function loadBookmarks(){
-  try { return JSON.parse(localStorage.getItem(LS.bookmarks) || "{}") || {}; }
-  catch { return {}; }
-}
-function saveBookmarks(){
-  localStorage.setItem(LS.bookmarks, JSON.stringify(state.bookmarks));
-}
-function isBookmarked(id){ return !!state.bookmarks[id]; }
-function toggleBookmark(post){
-  if (!post?.id) return false;
-  if (state.bookmarks[post.id]) {
-    delete state.bookmarks[post.id];
-    saveBookmarks();
-    toast("북마크 제거");
-    return false;
+function el(tag, attrs = {}, ...children) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") n.className = v;
+    else if (k === "html") n.innerHTML = v;
+    else if (k.startsWith("on") && typeof v === "function") n.addEventListener(k.slice(2), v);
+    else n.setAttribute(k, v);
   }
-  state.bookmarks[post.id] = {
-    id: post.id,
-    title: post.title,
-    category: post.category,
-    authorName: post.authorName,
-    createdAt: post.createdAt,
-    pinned: !!post.pinned
-  };
-  saveBookmarks();
-  toast("북마크 추가");
-  return true;
+  for (const c of children) {
+    if (c == null) continue;
+    if (typeof c === "string") n.appendChild(document.createTextNode(c));
+    else n.appendChild(c);
+  }
+  return n;
 }
 
-/* ---------- UI Refs ---------- */
-const $boot = $("#boot");
-const $bootFill = $("#bootFill");
-const $bootPct = $("#bootPct");
-const $bootLog = $("#bootLog");
-const $bootBubbles = $("#bootBubbles");
+/* ------------------------ Toast ------------------------ */
+function toast(msg, type = "ok") {
+  const root = $("#toastRoot");
+  const t = el("div", { class: `toast toast--${type === "bad" ? "bad" : type === "ok" ? "ok" : ""}` }, msg);
+  root.appendChild(t);
+  setTimeout(() => t.classList.add("is-out"), 2600);
+  setTimeout(() => t.remove(), 3200);
+}
 
-const $rtDot = $("#rtDot");
-const $rtLabel = $("#rtLabel");
-const $rtMeta = $("#rtMeta");
+/* ------------------------ Modal ------------------------ */
+function openModal(title, bodyNode, actions = []) {
+  const root = $("#modalRoot");
+  root.classList.remove("is-hidden");
+  root.setAttribute("aria-hidden", "false");
 
-const $themeBtn = $("#themeBtn");
-const $bookmarksBtn = $("#bookmarksBtn");
-const $activityBtn = $("#activityBtn");
+  const modal = el("div", { class: "modal", role: "dialog", "aria-modal": "true" });
+  const head = el("div", { class: "modal__head" },
+    el("div", { class: "modal__title" }, title),
+    el("button", { class: "btn btn--ghost", type: "button", onclick: closeModal }, "닫기")
+  );
+  const body = el("div", { class: "modal__body" }, bodyNode);
+  const foot = el("div", { class: "modal__foot" }, ...actions);
 
-const $loginBtn = $("#loginBtn");
-const $userBox = $("#userBox");
+  modal.append(head, body, foot);
+  root.innerHTML = "";
+  root.appendChild(modal);
 
-const $qInput = $("#qInput");
-const $searchBtn = $("#searchBtn");
-const $sortSel = $("#sortSel");
-const $refreshBtn = $("#refreshBtn");
+  root.addEventListener("click", (e) => {
+    if (e.target === root) closeModal();
+  }, { once: true });
+}
 
-const $chips = $$(".chip");
-const $newPostBtn = $("#newPostBtn");
-const $fabBtn = $("#fabBtn");
-const $homeBtn = $("#homeBtn");
+function closeModal() {
+  const root = $("#modalRoot");
+  root.classList.add("is-hidden");
+  root.setAttribute("aria-hidden", "true");
+  root.innerHTML = "";
+}
 
-const $banner = $("#banner");
-
-const $feedView = $("#feedView");
-const $postView = $("#postView");
-const $list = $("#list");
-const $loadMoreBtn = $("#loadMoreBtn");
-const $loadMoreMeta = $("#loadMoreMeta");
-const $pillCount = $("#pillCount");
-const $feedTitle = $("#feedTitle");
-const $feedSub = $("#feedSub");
-
-const $backBtn = $("#backBtn");
-const $postCat = $("#postCat");
-const $postAuthor = $("#postAuthor");
-const $postTime = $("#postTime");
-const $postTitle = $("#postTitle");
-const $postBody = $("#postBody");
-const $postLikeCount = $("#postLikeCount");
-const $postCommentCount = $("#postCommentCount");
-const $postLikeBtn = $("#postLikeBtn");
-const $postReportBtn = $("#postReportBtn");
-const $postBookmarkBtn = $("#postBookmarkBtn");
-const $postPinBtn = $("#postPinBtn");
-const $postEditBtn = $("#postEditBtn");
-const $postDeleteBtn = $("#postDeleteBtn");
-
-const $commentMeta = $("#commentMeta");
-const $commentAnon = $("#commentAnon");
-const $commentPreviewBtn = $("#commentPreviewBtn");
-const $commentInput = $("#commentInput");
-const $commentSendBtn = $("#commentSendBtn");
-const $commentPreview = $("#commentPreview");
-const $commentList = $("#commentList");
-
-const $modalRoot = $("#modalRoot");
-const $toastRoot = $("#toastRoot");
-
-/* ---------- Markdown config ---------- */
+/* ------------------------ Markdown ------------------------ */
 marked.setOptions({
   gfm: true,
   breaks: true,
   headerIds: false,
-  mangle: false
+  mangle: false,
 });
-function md(htmlMd){
-  const raw = marked.parse(String(htmlMd || ""));
-  return DOMPurify.sanitize(raw, {
-    USE_PROFILES: { html: true },
-    ADD_ATTR: ["target", "rel"]
-  });
+
+function renderMd(md) {
+  const raw = marked.parse(md || "");
+  // DOMPurify로 XSS 방지
+  return DOMPurify.sanitize(raw, { USE_PROFILES: { html: true } });
 }
 
-/* ---------- Icons ---------- */
-function renderIcons(){
+/* ------------------------ Storage ------------------------ */
+const LS = {
+  token: "srt_token",
+  theme: "srt_theme",
+  bookmarks: "srt_bookmarks", // { [postId]: { id,title,createdAt } }
+};
+
+function getToken() {
+  return localStorage.getItem(LS.token) || "";
+}
+function setToken(t) {
+  if (!t) localStorage.removeItem(LS.token);
+  else localStorage.setItem(LS.token, t);
+}
+function loadBookmarks() {
+  try { return JSON.parse(localStorage.getItem(LS.bookmarks) || "{}") || {}; } catch { return {}; }
+}
+function saveBookmarks(obj) {
+  localStorage.setItem(LS.bookmarks, JSON.stringify(obj || {}));
+}
+
+/* ------------------------ API ------------------------ */
+async function api(path, { method = "GET", body, auth = false } = {}) {
+  const headers = { "content-type": "application/json" };
+  if (auth) {
+    const token = getToken();
+    if (token) headers.Authorization = `Bearer ${token}`;
+  }
+  const r = await fetch(`${API_BASE}${path}`, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const txt = await r.text();
+  let data = null;
+  try { data = JSON.parse(txt); } catch { data = { ok: false, raw: txt }; }
+  if (!r.ok) throw Object.assign(new Error(data?.error || "request_failed"), { status: r.status, data });
+  return data;
+}
+
+/* ------------------------ App state ------------------------ */
+const state = {
+  me: null,
+  cat: "all",
+  sort: "latest",
+  q: "",
+  cursor: "",
+  loading: false,
+  currentPostId: "",
+  rt: { ws: null, status: "connecting", lastEventAt: 0 },
+  admin: { reportCursor: "", reportStatus: "open" },
+};
+
+/* ------------------------ Boot loader ------------------------ */
+function boot() {
+  const bootEl = $("#boot");
+  const bar = $("#bootBar");
+  const pct = $("#bootPct");
+  const hint = $("#bootHint");
+  const ring = $("#bootRing");
+
+  const hints = [
+    "환경 설정 불러오는 중…",
+    "세션 확인 중…",
+    "게시판 초기화…",
+    "실시간 채널 연결 준비…",
+    "렌더링 최적화…",
+    "마크다운 렌더러 준비…",
+    "거의 다 됐어요…",
+  ];
+  let p = 0;
+
+  function randStep() {
+    // 가끔 멈추고, 가끔 빨라지고, 가끔 느려지는 느낌
+    const r = Math.random();
+    if (r < 0.10) return 0;          // 멈춤
+    if (r < 0.40) return 1 + Math.random() * 3;
+    if (r < 0.85) return 3 + Math.random() * 6;
+    return 7 + Math.random() * 10;  // 빨라짐
+  }
+  function randSpeed() {
+    // 링도 속도 랜덤
+    const r = 0.7 + Math.random() * 1.4;
+    ring.style.animationDuration = `${r}s`;
+  }
+
+  const timer = setInterval(() => {
+    randSpeed();
+    p = Math.min(100, p + randStep());
+    bar.style.width = `${p}%`;
+    pct.textContent = `${Math.floor(p)}%`;
+    hint.textContent = hints[Math.min(hints.length - 1, Math.floor((p / 100) * hints.length))];
+
+    if (p >= 100) {
+      clearInterval(timer);
+      setTimeout(() => {
+        bootEl.classList.add("is-hidden");
+      }, 280);
+    }
+  }, 180);
+}
+
+/* ------------------------ Theme ------------------------ */
+function applyTheme(t) {
+  if (t) document.documentElement.setAttribute("data-theme", t);
+  else document.documentElement.removeAttribute("data-theme");
+}
+function initTheme() {
+  const t = localStorage.getItem(LS.theme) || "";
+  applyTheme(t);
+}
+
+/* ------------------------ Lucide ------------------------ */
+function refreshIcons() {
   try {
-    if (window.lucide && typeof lucide.createIcons === "function") {
-      lucide.createIcons();
+    if (window.lucide && typeof window.lucide.createIcons === "function") {
+      window.lucide.createIcons();
     }
   } catch {}
 }
 
-/* ---------- Banner / Toast ---------- */
-function banner(msg, type="info"){
-  $banner.classList.remove("is-hidden");
-  $banner.textContent = msg;
-  $banner.dataset.type = type;
-  clearTimeout(banner._t);
-  banner._t = setTimeout(()=>{ $banner.classList.add("is-hidden"); }, 4500);
-}
-function toast(msg){
-  const el = document.createElement("div");
-  el.className = "toast";
-  el.textContent = msg;
-  $toastRoot.appendChild(el);
-  setTimeout(()=>{ el.style.opacity = "0"; el.style.transform = "translateY(6px)"; }, 2200);
-  setTimeout(()=>{ el.remove(); }, 2800);
-}
-
-/* ---------- Time ---------- */
-function relTime(ms){
-  const t = Number(ms||0);
-  if (!t) return "-";
-  const d = Date.now() - t;
-  const s = Math.floor(d/1000);
-  if (s < 60) return `${s}초 전`;
-  const m = Math.floor(s/60);
-  if (m < 60) return `${m}분 전`;
-  const h = Math.floor(m/60);
-  if (h < 24) return `${h}시간 전`;
-  const day = Math.floor(h/24);
-  return `${day}일 전`;
-}
-function fmtDate(ms){
-  const d = new Date(Number(ms||0));
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
-}
-
-/* ---------- API ---------- */
-async function api(path, { method="GET", body=null, qsObj=null } = {}){
-  const u = new URL(API_BASE + path);
-  if (qsObj) Object.entries(qsObj).forEach(([k,v])=> v!==undefined && v!==null && u.searchParams.set(k,String(v)));
-  const headers = { "content-type":"application/json" };
-  if (state.token) headers["Authorization"] = `Bearer ${state.token}`;
-
-  const res = await fetch(u.toString(), {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : null
-  });
-
-  let data = null;
-  try { data = await res.json(); } catch { data = null; }
-
-  if (!res.ok || (data && data.ok === false)) {
-    const msg = (data && (data.message || data.error)) || `HTTP ${res.status}`;
-    throw new Error(msg);
+/* ------------------------ UI helpers ------------------------ */
+function setBanner(msg, kind = "ok") {
+  const b = $("#banner");
+  if (!msg) {
+    b.classList.add("is-hidden");
+    b.textContent = "";
+    b.classList.remove("is-bad");
+    return;
   }
-  return data;
+  b.classList.remove("is-hidden");
+  b.textContent = msg;
+  b.classList.toggle("is-bad", kind === "bad");
 }
 
-/* ---------- Theme ---------- */
-function applyTheme(theme){
-  if (theme === "light") document.documentElement.dataset.theme = "light";
-  else document.documentElement.dataset.theme = "dark";
-  localStorage.setItem(LS.theme, theme);
-  renderIcons();
-}
-function initTheme(){
-  const saved = localStorage.getItem(LS.theme);
-  if (saved) return applyTheme(saved);
-  // default: dark
-  applyTheme("dark");
+function formatTime(ms) {
+  const d = new Date(ms);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/* ---------- Boot loading animation ---------- */
-function boot(){
-  let pct = 0;
-  const tasks = [
-    "UI 구성 요소 준비…",
-    "테마/아이콘 로딩…",
-    "세션 확인…",
-    "피드 데이터 요청…",
-    "실시간 채널 연결…",
-    "마크다운 렌더러 준비…",
-    "북마크 불러오기…",
-    "마무리 중…"
-  ];
-  let i = 0;
+function catLabel(cat) {
+  if (cat === "free") return "자유";
+  if (cat === "notice") return "공지";
+  if (cat === "qna") return "Q&A";
+  if (cat === "study") return "스터디";
+  if (cat === "all") return "전체";
+  return cat;
+}
 
-  function addBubble(){
-    const b = document.createElement("span");
-    b.className = "bubble";
-    const left = Math.random()*100;
-    const size = 4 + Math.random()*10;
-    const dur = 900 + Math.random()*1400;
-    b.style.left = left + "%";
-    b.style.width = size + "px";
-    b.style.height = size + "px";
-    b.style.position = "absolute";
-    b.style.bottom = "-10px";
-    b.style.borderRadius = "999px";
-    b.style.background = "rgba(255,255,255,.55)";
-    b.style.filter = "blur(.2px)";
-    b.style.opacity = ".85";
-    b.style.transform = "translateY(0)";
-    b.style.transition = `transform ${dur}ms ease, opacity ${dur}ms ease`;
-    $bootBubbles.appendChild(b);
-    requestAnimationFrame(()=>{
-      b.style.transform = "translateY(-26px)";
-      b.style.opacity = "0";
-    });
-    setTimeout(()=> b.remove(), dur+80);
+function ensureLoginOrWarn() {
+  if (state.me) return true;
+  toast("로그인이 필요합니다.", "bad");
+  openLoginModal();
+  return false;
+}
+
+/* ------------------------ Realtime ------------------------ */
+function setRtStatus(kind, meta = "—") {
+  const rt = $(".rt");
+  const label = $("#rtLabel");
+  const metaEl = $("#rtMeta");
+
+  rt.classList.remove("is-on", "is-bad");
+  if (kind === "on") {
+    rt.classList.add("is-on");
+    label.textContent = "실시간: 연결됨";
+  } else if (kind === "bad") {
+    rt.classList.add("is-bad");
+    label.textContent = "실시간: 연결 실패";
+  } else {
+    label.textContent = "실시간: 연결 중…";
   }
-  const bubbleTimer = setInterval(()=>{ if (Math.random()<0.55) addBubble(); }, 180);
-
-  return new Promise((resolve)=>{
-    const tick = async ()=>{
-      const step = 2 + Math.random()*10;          // random speed
-      const jitter = Math.random() < 0.08 ? -10 : 0; // sometimes slow/back
-      pct = clamp(pct + step + jitter, 0, 100);
-      $bootFill.style.width = pct + "%";
-      $bootPct.textContent = String(Math.floor(pct));
-
-      if (Math.random()<0.25){
-        $bootLog.textContent = tasks[i % tasks.length];
-        i++;
-      }
-
-      if (pct >= 100){
-        clearInterval(bubbleTimer);
-        setTimeout(()=>{
-          $boot.style.opacity = "0";
-          $boot.style.transition = "opacity .28s ease";
-          setTimeout(()=>{ $boot.remove(); resolve(); }, 320);
-        }, 180);
-        return;
-      }
-
-      const wait = 60 + Math.random()*180 + (Math.random()<0.12 ? 260 : 0); // sometimes pause
-      setTimeout(tick, wait);
-    };
-    tick();
-  });
+  metaEl.textContent = meta;
 }
 
-/* ---------- Auth UI ---------- */
-function renderUserBox(){
+function connectRealtime() {
+  try {
+    if (state.rt.ws) {
+      state.rt.ws.close();
+      state.rt.ws = null;
+    }
+  } catch {}
+
+  setRtStatus("connecting");
+  const wsUrl = `${API_BASE.replace(/^http/, "ws")}/realtime?channel=feed`;
+  const ws = new WebSocket(wsUrl);
+  state.rt.ws = ws;
+
+  ws.onopen = () => {
+    state.rt.status = "on";
+    setRtStatus("on", "feed");
+    // ping
+    try { ws.send("ping"); } catch {}
+  };
+  ws.onclose = () => {
+    state.rt.status = "bad";
+    setRtStatus("bad", "재연결 시도…");
+    setTimeout(connectRealtime, 1200);
+  };
+  ws.onerror = () => {
+    state.rt.status = "bad";
+    setRtStatus("bad", "오류");
+  };
+  ws.onmessage = (e) => {
+    let data = null;
+    try { data = JSON.parse(e.data); } catch { return; }
+    if (data?.type !== "event") return;
+    state.rt.lastEventAt = Date.now();
+
+    const payload = data.payload || {};
+    if (payload.kind === "post_created") {
+      toast("새 글이 올라왔어요. 새로고침하면 보입니다.", "ok");
+      // 목록 화면이면 자동으로 살짝 표시
+      if (!$("#feedView").classList.contains("is-hidden")) {
+        $("#rtMeta").textContent = "새 글!";
+      }
+    }
+    if (payload.kind === "comment_created") {
+      toast("새 댓글이 달렸어요.", "ok");
+    }
+    if (payload.kind === "post_pinned") {
+      toast(payload.pinned ? "공지 고정됨" : "공지 고정 해제됨", "ok");
+    }
+  };
+}
+
+/* ------------------------ Auth UI ------------------------ */
+async function refreshMe() {
+  const token = getToken();
+  if (!token) {
+    state.me = null;
+    renderUserBox();
+    return;
+  }
+  try {
+    const me = await api("/auth/me", { auth: true });
+    state.me = me.user;
+  } catch {
+    state.me = null;
+    setToken("");
+  }
+  renderUserBox();
+}
+
+function renderUserBox() {
+  const box = $("#userBox");
+  box.innerHTML = "";
+
+  const adminBtn = $("#adminBtn");
+  if (state.me && (state.me.role === "admin" || state.me.role === "mod")) adminBtn.classList.remove("is-hidden");
+  else adminBtn.classList.add("is-hidden");
+
   if (!state.me) {
-    $userBox.innerHTML = `<button class="btn btn--primary" id="loginBtn2" type="button">로그인</button>`;
-    $("#loginBtn2").addEventListener("click", openLogin);
+    box.appendChild(el("button", { class: "btn btn--primary", id: "loginBtn2", type: "button", onclick: openLoginModal }, "로그인"));
     return;
   }
 
-  const roleBadge = state.me.role === "admin" ? "ADMIN" : (state.me.role === "mod" ? "MOD" : "STUDENT");
+  const pill = el("span", { class: "pill" }, state.me.nickname);
+  const role = (state.me.role === "admin" || state.me.role === "mod")
+    ? el("span", { class: "badge badge--pin" }, state.me.role.toUpperCase())
+    : null;
 
-  $userBox.innerHTML = `
-    <div class="pill">
-      <span class="icon" data-lucide="user"></span>
-      ${escapeHtml(state.me.nickname)}
-      <span style="opacity:.65">(${roleBadge})</span>
-    </div>
-    <button class="btn btn--ghost" id="logoutBtn" type="button">
-      <span class="icon" data-lucide="log-out"></span> 로그아웃
-    </button>
-    ${isAdminRole(state.me.role) ? `
-      <button class="btn btn--ghost" id="adminReportsBtn" type="button">
-        <span class="icon" data-lucide="flag"></span> 신고함
-      </button>
-    ` : ""}
-  `;
+  const my = el("button", { class: "btn btn--ghost", type: "button", onclick: () => openMyActivity() },
+    "내 활동"
+  );
+  const logout = el("button", { class: "btn btn--ghost", type: "button", onclick: doLogout }, "로그아웃");
 
-  $("#logoutBtn").addEventListener("click", logout);
-  if (isAdminRole(state.me.role)) $("#adminReportsBtn").addEventListener("click", openAdminReports);
-
-  renderIcons();
+  box.append(pill);
+  if (role) box.append(role);
+  box.append(my, logout);
 }
 
-function escapeHtml(s){
-  return String(s||"")
-    .replaceAll("&","&amp;")
-    .replaceAll("<","&lt;")
-    .replaceAll(">","&gt;")
-    .replaceAll('"',"&quot;")
-    .replaceAll("'","&#039;");
-}
+function openLoginModal() {
+  const id = el("input", { class: "input", placeholder: "닉네임 또는 학번", autocomplete: "username" });
+  const pw = el("input", { class: "input", placeholder: "비밀번호", type: "password", autocomplete: "current-password" });
 
-async function refreshMe(){
-  if (!state.token) { state.me = null; renderUserBox(); return; }
-  try {
-    const r = await api("/auth/me");
-    state.me = r.user;
-    localStorage.setItem(LS.me, JSON.stringify(state.me));
-    renderUserBox();
-  } catch {
-    state.me = null;
-    state.token = "";
-    localStorage.removeItem(LS.token);
-    renderUserBox();
-  }
-}
-
-async function logout(){
-  try { await api("/auth/logout", { method:"POST" }); } catch {}
-  state.token = "";
-  state.me = null;
-  localStorage.removeItem(LS.token);
-  localStorage.removeItem(LS.me);
-  renderUserBox();
-  banner("로그아웃 되었어요.");
-}
-
-/* ---------- Modal ---------- */
-function closeModal(){
-  $modalRoot.classList.add("is-hidden");
-  $modalRoot.setAttribute("aria-hidden", "true");
-  $modalRoot.innerHTML = "";
-}
-function openModal(title, bodyHtml, actionsHtml){
-  $modalRoot.classList.remove("is-hidden");
-  $modalRoot.setAttribute("aria-hidden", "false");
-
-  $modalRoot.innerHTML = `
-    <div class="modalBackdrop" data-close="1"></div>
-    <div class="modal" role="dialog" aria-modal="true">
-      <div class="modal__head">
-        <div class="modal__title">${escapeHtml(title)}</div>
-        <button class="btn btn--ghost" data-close="1" type="button">닫기</button>
-      </div>
-      <div class="modal__body">${bodyHtml}</div>
-      <div class="modal__actions">${actionsHtml || ""}</div>
-    </div>
-  `;
-
-  $$("[data-close]", $modalRoot).forEach(el => el.addEventListener("click", closeModal));
-  renderIcons();
-}
-
-function openLogin(){
-  openModal("로그인 / 회원가입",
-    `
-      <div class="card" style="padding:12px">
-        <div class="muted" style="margin-bottom:10px">
-          로그인: 닉네임 또는 학번 + 비밀번호<br/>
-          회원가입: 닉네임 + 비밀번호 + 학번(선택)
-        </div>
-
-        <div class="row" style="gap:10px; flex-wrap:wrap">
-          <input id="liId" class="input" placeholder="닉네임 또는 학번" style="flex:1; min-width:220px" />
-          <input id="liPw" class="input" placeholder="비밀번호" type="password" style="flex:1; min-width:220px" />
-        </div>
-        <div class="row" style="justify-content:flex-end; margin-top:10px">
-          <button class="btn btn--primary" id="doLogin" type="button">로그인</button>
-        </div>
-
-        <hr style="border:none; border-top:1px solid var(--stroke); margin:14px 0"/>
-
-        <div class="row" style="gap:10px; flex-wrap:wrap">
-          <input id="reNick" class="input" placeholder="닉네임(2~16)" style="flex:1; min-width:220px" />
-          <input id="rePw" class="input" placeholder="비밀번호(4+)" type="password" style="flex:1; min-width:220px" />
-          <input id="reSid" class="input" placeholder="학번(선택)" style="flex:1; min-width:220px" />
-        </div>
-        <div class="row" style="justify-content:flex-end; margin-top:10px">
-          <button class="btn btn--ghost" id="doRegister" type="button">회원가입</button>
-        </div>
-      </div>
-    `,
-    ``
+  const form = el("div", {},
+    el("div", { class: "muted" }, "읽기는 누구나 · 쓰기는 로그인 필요"),
+    el("div", { style: "height:10px" }),
+    el("div", {}, el("div", { class: "muted" }, "아이디"), id),
+    el("div", { style: "height:10px" }),
+    el("div", {}, el("div", { class: "muted" }, "비밀번호"), pw),
   );
 
-  $("#doLogin").addEventListener("click", async ()=>{
-    const identifier = $("#liId").value.trim();
-    const password = $("#liPw").value.trim();
-    if (!identifier || !password) return toast("아이디/비밀번호를 입력해줘");
-    try {
-      const r = await api("/auth/login", { method:"POST", body:{ identifier, password } });
-      state.token = r.token;
-      localStorage.setItem(LS.token, state.token);
-      state.me = r.user;
-      localStorage.setItem(LS.me, JSON.stringify(state.me));
-      closeModal();
-      renderUserBox();
-      banner(`어서와요, ${state.me.nickname}!`);
-      await loadFeed(true);
-    } catch(e){
-      toast("로그인 실패: " + e.message);
-    }
-  });
-
-  $("#doRegister").addEventListener("click", async ()=>{
-    const nickname = $("#reNick").value.trim();
-    const password = $("#rePw").value.trim();
-    const studentId = $("#reSid").value.trim();
-    if (!nickname || !password) return toast("닉네임/비밀번호를 입력해줘");
-    try {
-      await api("/auth/register", { method:"POST", body:{ nickname, password, studentId: studentId || undefined } });
-      toast("회원가입 성공! 이제 로그인해줘.");
-      $("#liId").value = nickname;
-      $("#liPw").focus();
-    } catch(e){
-      toast("회원가입 실패: " + e.message);
-    }
-  });
+  openModal("로그인", form, [
+    el("button", { class: "btn btn--ghost", type: "button", onclick: () => { closeModal(); openRegisterModal(); } }, "회원가입"),
+    el("button", { class: "btn btn--primary", type: "button", onclick: async () => {
+      try {
+        const res = await api("/auth/login", { method: "POST", body: { identifier: id.value.trim(), password: pw.value } });
+        setToken(res.token);
+        closeModal();
+        toast("로그인 성공", "ok");
+        await refreshMe();
+        await loadFeed(true);
+      } catch (e) {
+        toast("로그인 실패", "bad");
+      }
+    }}, "로그인"),
+  ]);
 }
 
-/* ---------- Feed rendering ---------- */
-function catLabel(c){
-  if (c==="free") return "자유";
-  if (c==="notice") return "공지";
-  if (c==="qna") return "Q&A";
-  if (c==="study") return "스터디";
-  return "전체";
-}
-function postCard(p){
-  const bm = isBookmarked(p.id);
-  return `
-    <div class="item" data-open="${p.id}" tabindex="0">
-      <div class="item__top">
-        <span class="tag">${escapeHtml(catLabel(p.category))}</span>
-        ${p.pinned ? `<span class="pin"><span class="icon" data-lucide="pin"></span>고정</span>` : ""}
-        <span class="pill">${escapeHtml(p.authorName)}</span>
-        <span class="pill">${escapeHtml(relTime(p.createdAt))}</span>
-        <div class="item__right">
-          <span class="pill">👍 ${p.likes}</span>
-          <span class="pill">💬 ${p.comments}</span>
-          <button class="btn btn--ghost" data-bm="${p.id}" type="button" title="북마크">
-            <span class="icon" data-lucide="bookmark" style="opacity:${bm?1:0.55}"></span>
-          </button>
-        </div>
-      </div>
-      <div class="item__title">${escapeHtml(p.title)}</div>
-      <div class="item__meta">
-        <span>정렬: ${escapeHtml(state.sort)}</span>
-        <span>•</span>
-        <span>${escapeHtml(fmtDate(p.createdAt))}</span>
-      </div>
-    </div>
-  `;
+function openRegisterModal() {
+  const nick = el("input", { class: "input", placeholder: "닉네임(2~16)", autocomplete: "nickname" });
+  const sid = el("input", { class: "input", placeholder: "학번(선택)", autocomplete: "off" });
+  const pw = el("input", { class: "input", placeholder: "비밀번호(4자 이상)", type: "password", autocomplete: "new-password" });
+  const pw2 = el("input", { class: "input", placeholder: "비밀번호 확인", type: "password", autocomplete: "new-password" });
+
+  const body = el("div", {},
+    el("div", { class: "muted" }, "닉네임은 영문/숫자/한글/_ 만 가능"),
+    el("div", { style: "height:10px" }),
+    el("div", {}, el("div", { class: "muted" }, "닉네임"), nick),
+    el("div", { style: "height:10px" }),
+    el("div", {}, el("div", { class: "muted" }, "학번(선택)"), sid),
+    el("div", { style: "height:10px" }),
+    el("div", {}, el("div", { class: "muted" }, "비밀번호"), pw),
+    el("div", { style: "height:10px" }),
+    el("div", {}, el("div", { class: "muted" }, "비밀번호 확인"), pw2),
+  );
+
+  openModal("회원가입", body, [
+    el("button", { class: "btn btn--ghost", type: "button", onclick: closeModal }, "취소"),
+    el("button", { class: "btn btn--primary", type: "button", onclick: async () => {
+      if (pw.value !== pw2.value) { toast("비밀번호가 다릅니다.", "bad"); return; }
+      try {
+        await api("/auth/register", { method: "POST", body: { nickname: nick.value.trim(), studentId: sid.value.trim(), password: pw.value } });
+        toast("가입 완료! 로그인 해주세요.", "ok");
+        closeModal();
+        openLoginModal();
+      } catch (e) {
+        toast("가입 실패(닉네임/학번 중복 또는 규칙 위반)", "bad");
+      }
+    }}, "가입하기"),
+  ]);
 }
 
-function bindListClicks(posts){
-  $$("[data-open]", $list).forEach(el=>{
-    el.addEventListener("click", ()=>{
-      const id = el.getAttribute("data-open");
-      openPost(id);
-    });
-  });
-  $$("[data-bm]", $list).forEach(btn=>{
-    btn.addEventListener("click", (e)=>{
-      e.stopPropagation();
-      const id = btn.getAttribute("data-bm");
-      const p = posts.find(x=>x.id===id);
-      if (!p) return;
-      const on = toggleBookmark(p);
-      btn.querySelector(".icon")?.style && (btn.querySelector(".icon").style.opacity = on ? "1" : "0.55");
-      renderIcons();
-    });
-  });
+async function doLogout() {
+  try { await api("/auth/logout", { method: "POST", auth: true }); } catch {}
+  setToken("");
+  state.me = null;
+  renderUserBox();
+  toast("로그아웃", "ok");
+  await loadFeed(true);
 }
 
-/* ---------- Feed load ---------- */
-async function loadFeed(reset=false){
+/* ------------------------ Feed / Routing ------------------------ */
+function showView(name) {
+  $("#feedView").classList.toggle("is-hidden", name !== "feed");
+  $("#postView").classList.toggle("is-hidden", name !== "post");
+  $("#adminView").classList.toggle("is-hidden", name !== "admin");
+}
+
+function setActiveCat(cat) {
+  $$(".chip").forEach((c) => c.classList.toggle("is-active", c.dataset.cat === cat));
+}
+
+async function loadFeed(reset = false) {
   if (state.loading) return;
   state.loading = true;
 
-  try{
-    if (reset){
+  try {
+    if (reset) {
       state.cursor = "";
-      state.list = [];
-      $list.innerHTML = "";
-      $loadMoreMeta.textContent = "";
+      $("#list").innerHTML = "";
+      $("#loadMoreMeta").textContent = "";
+      setBanner("불러오는 중…");
     }
 
-    $loadMoreBtn.disabled = true;
-    $loadMoreBtn.textContent = "불러오는 중…";
-
-    const r = await api("/posts", {
-      qsObj: {
-        category: state.category,
-        q: state.q || undefined,
-        sort: state.sort,
-        cursor: state.cursor || undefined,
-        pageSize: 50
-      }
-    });
-
-    const posts = r.posts || [];
-    state.cursor = r.nextCursor || "";
-    state.list = state.list.concat(posts);
-
-    $pillCount.textContent = String(state.list.length);
-    $feedTitle.textContent = state.category==="all" ? "게시판" : catLabel(state.category);
-    $feedSub.textContent = `${state.q ? `검색: "${state.q}" · ` : ""}정렬: ${state.sort}`;
-
-    if (reset && posts.length === 0){
-      $list.innerHTML = `<div class="card" style="padding:14px">아직 글이 없어요. <b>+ 새 글</b>로 첫 글을 올려보세요!</div>`;
-    } else {
-      const html = posts.map(postCard).join("");
-      $list.insertAdjacentHTML("beforeend", html);
+    if (state.cat === "me") {
+      if (!ensureLoginOrWarn()) { setBanner(""); state.loading = false; return; }
+      await openMyActivity(true);
+      state.loading = false;
+      return;
     }
 
-    bindListClicks(state.list);
-    renderIcons();
+    const qs = new URLSearchParams();
+    qs.set("category", state.cat);
+    qs.set("sort", state.sort);
+    qs.set("pageSize", "30");
+    if (state.q) qs.set("q", state.q);
+    if (state.cursor) qs.set("cursor", state.cursor);
 
-    $loadMoreBtn.disabled = !state.cursor;
-    $loadMoreBtn.textContent = state.cursor ? "더 보기" : "끝!";
-    $loadMoreMeta.textContent = state.cursor ? "더 오래된 글을 불러올 수 있어요." : "더 이상 불러올 글이 없어요.";
-  } catch(e){
-    banner("피드 로드 실패: " + e.message, "error");
-    $loadMoreBtn.disabled = false;
-    $loadMoreBtn.textContent = "다시 시도";
-  } finally{
+    const res = await api(`/posts?${qs.toString()}`, { auth: false });
+    setBanner("");
+
+    const items = res.posts || [];
+    $("#pillCount").textContent = String(items.length + (reset ? 0 : 0));
+    renderPostList(items, reset);
+
+    state.cursor = res.nextCursor || "";
+    $("#loadMoreMeta").textContent = state.cursor ? "더 불러올 수 있어요" : "끝!";
+    $("#loadMoreBtn").style.display = state.cursor ? "inline-flex" : "none";
+  } catch (e) {
+    setBanner("서버 연결 실패. API 주소/CORS를 확인해 주세요.", "bad");
+  } finally {
     state.loading = false;
+    refreshIcons();
   }
 }
 
-/* ---------- Post view ---------- */
-function showFeed(){
-  $postView.classList.add("is-hidden");
-  $feedView.classList.remove("is-hidden");
-  window.scrollTo({ top: 0, behavior: "smooth" });
+function renderPostList(posts, reset) {
+  const list = $("#list");
+
+  if (reset && (!posts || posts.length === 0)) {
+    list.appendChild(el("div", { class: "item" },
+      el("div", { class: "item__title" }, "아직 글이 없어요."),
+      el("div", { class: "item__meta" }, "첫 글을 작성해 커뮤니티를 시작해보세요!")
+    ));
+    return;
+  }
+
+  for (const p of posts) {
+    const badges = el("div", { class: "item__badges" });
+    if (p.pinned) badges.appendChild(el("span", { class: "badge badge--pin" }, "PIN"));
+    badges.appendChild(el("span", { class: "badge" }, `👍 ${p.likes}`));
+    badges.appendChild(el("span", { class: "badge" }, `💬 ${p.comments}`));
+
+    const item = el("div", { class: "item", onclick: () => openPost(p.id) },
+      el("div", { class: "item__top" },
+        el("span", { class: "tag" }, catLabel(p.category)),
+        el("div", { class: "item__title" }, p.title),
+        badges
+      ),
+      el("div", { class: "item__meta" },
+        el("span", {}, p.authorName),
+        el("span", {}, "•"),
+        el("span", {}, formatTime(p.createdAt))
+      )
+    );
+    list.appendChild(item);
+  }
 }
-function showPost(){
-  $feedView.classList.add("is-hidden");
-  $postView.classList.remove("is-hidden");
-  window.scrollTo({ top: 0, behavior: "smooth" });
-}
 
-let currentPost = null;
+async function openPost(postId) {
+  showView("post");
+  state.currentPostId = postId;
+  $("#postBody").innerHTML = "";
+  $("#postTitle").textContent = "불러오는 중…";
+  $("#commentList").innerHTML = "";
+  $("#commentPreview").classList.add("is-hidden");
+  $("#commentInput").value = "";
+  $("#postEditBtn").classList.add("is-hidden");
+  $("#postDeleteBtn").classList.add("is-hidden");
+  $("#postPinBtn").classList.add("is-hidden");
+  $("#postPinned").classList.add("is-hidden");
 
-async function openPost(postId){
-  try{
-    showPost();
-    $postTitle.textContent = "불러오는 중…";
-    $postBody.innerHTML = "";
-    $commentList.innerHTML = "";
-    $commentMeta.textContent = "댓글 불러오는 중…";
+  try {
+    const res = await api(`/posts/${postId}`, { auth: true }); // auth 있으면 canEdit/canDelete 정확
+    if (!res.ok) throw new Error("fail");
 
-    const r = await api(`/posts/${postId}`);
-    currentPost = r.post;
+    const p = res.post;
+    $("#postCat").textContent = catLabel(p.category);
+    $("#postAuthor").textContent = p.authorName;
+    $("#postTime").textContent = formatTime(p.createdAt);
+    $("#postTitle").textContent = p.title;
+    $("#postBody").innerHTML = renderMd(p.bodyMd);
+    $("#postLikeCount").textContent = `👍 ${p.likes}`;
+    $("#postCommentCount").textContent = `💬 ${p.comments}`;
 
-    $postCat.textContent = catLabel(currentPost.category);
-    $postAuthor.textContent = currentPost.authorName + (currentPost.anonymous ? " (익명)" : "");
-    $postTime.textContent = fmtDate(currentPost.createdAt);
-    $postTitle.textContent = currentPost.title;
-    $postBody.innerHTML = md(currentPost.bodyMd);
-    $postLikeCount.textContent = `👍 ${currentPost.likes}`;
-    $postCommentCount.textContent = `💬 ${currentPost.comments}`;
+    if (p.pinned) $("#postPinned").classList.remove("is-hidden");
+    else $("#postPinned").classList.add("is-hidden");
 
-    // bookmark btn state
-    const bmOn = isBookmarked(currentPost.id);
-    $postBookmarkBtn.querySelector(".icon")?.style && ($postBookmarkBtn.querySelector(".icon").style.opacity = bmOn ? "1" : "0.55");
-
-    // permissions
-    $postEditBtn.classList.toggle("is-hidden", !currentPost.canEdit);
-    $postDeleteBtn.classList.toggle("is-hidden", !currentPost.canDelete);
-    $postPinBtn.classList.toggle("is-hidden", !currentPost.canPin);
-    $postPinBtn.textContent = currentPost.pinned ? "📌 고정 해제" : "📌 고정";
-
-    renderIcons();
+    // Buttons
+    if (p.canEdit) $("#postEditBtn").classList.remove("is-hidden");
+    if (p.canDelete) $("#postDeleteBtn").classList.remove("is-hidden");
+    if (state.me && (state.me.role === "admin" || state.me.role === "mod")) {
+      $("#postPinBtn").classList.remove("is-hidden");
+    }
 
     // comments
-    const cr = await api(`/posts/${postId}/comments`);
-    const comments = cr.comments || [];
-    $commentMeta.textContent = `${comments.length}개 댓글`;
-    $commentList.innerHTML = comments.map(c=>`
-      <div class="comment">
-        <div class="comment__meta">
-          <span class="pill">${escapeHtml(c.authorName)}</span>
-          <span class="pill">${escapeHtml(relTime(c.createdAt))}</span>
-        </div>
-        <div class="comment__body md">${md(c.bodyMd)}</div>
-      </div>
-    `).join("");
+    await loadComments(postId);
 
-  } catch(e){
-    banner("글 불러오기 실패: " + e.message, "error");
-    showFeed();
+    // bookmark UI
+    syncBookmarkBtn(postId, p.title, p.createdAt);
+
+  } catch (e) {
+    toast("글 불러오기 실패", "bad");
+    showView("feed");
+  } finally {
+    refreshIcons();
   }
 }
 
-/* ---------- Create/Edit Post ---------- */
-function requireLogin(){
-  if (!state.me) { openLogin(); return false; }
-  return true;
-}
+async function loadComments(postId) {
+  try {
+    const res = await api(`/posts/${postId}/comments`, { auth: true });
+    const list = $("#commentList");
+    list.innerHTML = "";
+    const cs = res.comments || [];
+    $("#commentMeta").textContent = `총 ${cs.length}개`;
 
-function openWriteModal(edit=false){
-  if (!requireLogin()) return;
+    if (cs.length === 0) {
+      list.appendChild(el("div", { class: "comment" },
+        el("div", { class: "muted" }, "아직 댓글이 없어요. 첫 댓글을 남겨보세요!")
+      ));
+      return;
+    }
 
-  const p = currentPost;
-  const title = edit ? "글 수정" : "새 글 작성";
-  const initCat = edit ? p.category : "free";
-  const initTitle = edit ? p.title : "";
-  const initBody = edit ? p.bodyMd : "";
-  const initAnon = edit ? !!p.anonymous : false;
+    for (const c of cs) {
+      const head = el("div", { class: "comment__head" },
+        el("span", { class: "tag" }, c.authorName),
+        el("span", { class: "muted" }, formatTime(c.createdAt)),
+      );
 
-  openModal(title, `
-    <div class="row" style="gap:10px; flex-wrap:wrap">
-      <div class="select" style="min-width:220px; flex:1">
-        <label class="select__label" for="wCat">카테고리</label>
-        <select id="wCat" class="select__box">
-          <option value="free">자유</option>
-          <option value="notice">공지</option>
-          <option value="qna">Q&A</option>
-          <option value="study">스터디</option>
-        </select>
-      </div>
-      <label class="toggle" style="margin-left:auto">
-        <input id="wAnon" type="checkbox" />
-        <span>익명</span>
-      </label>
-    </div>
-
-    <input id="wTitle" class="input" placeholder="제목" />
-    <textarea id="wBody" class="textarea" rows="10" placeholder="본문 (Markdown 지원)"></textarea>
-
-    <div class="row">
-      <div class="muted">#~###### 제목 지원 / 테이블 / 체크박스 / 코드블럭 지원</div>
-      <div class="spacer"></div>
-      <button class="btn btn--ghost" id="wPreviewBtn" type="button">미리보기</button>
-    </div>
-    <div id="wPreview" class="md is-hidden"></div>
-  `, `
-    <button class="btn btn--ghost" type="button" data-close="1">취소</button>
-    <button class="btn btn--primary" id="wSubmit" type="button">${edit ? "수정 저장" : "등록"}</button>
-  `);
-
-  $("#wCat").value = initCat;
-  $("#wTitle").value = initTitle;
-  $("#wBody").value = initBody;
-  $("#wAnon").checked = initAnon;
-
-  $("#wPreviewBtn").addEventListener("click", ()=>{
-    const box = $("#wPreview");
-    const on = box.classList.toggle("is-hidden") === false;
-    if (on) box.innerHTML = md($("#wBody").value);
-  });
-
-  $("#wSubmit").addEventListener("click", async ()=>{
-    const category = $("#wCat").value;
-    const title = $("#wTitle").value.trim();
-    const bodyMd = $("#wBody").value.trim();
-    const anonymous = $("#wAnon").checked;
-
-    if (!title || !bodyMd) return toast("제목/본문을 입력해줘");
-
-    try{
-      if (!edit){
-        const r = await api("/posts", { method:"POST", body:{ category, title, bodyMd, anonymous } });
-        closeModal();
-        toast("글 등록 완료!");
-        await loadFeed(true);
-        await openPost(r.postId);
-      } else {
-        await api(`/posts/${p.id}`, { method:"PATCH", body:{ category, title, bodyMd, anonymous } });
-        closeModal();
-        toast("수정 완료!");
-        await openPost(p.id);
-        await loadFeed(true);
+      const actions = el("div", { class: "comment__actions" });
+      if (c.canDelete) {
+        actions.appendChild(el("button", { class: "btn btn--danger", type: "button", onclick: async (ev) => {
+          ev.stopPropagation();
+          if (!confirm("댓글을 삭제할까요?")) return;
+          try {
+            await api(`/comments/${c.id}`, { method: "DELETE", auth: true });
+            toast("댓글 삭제됨", "ok");
+            await loadComments(postId);
+          } catch {
+            toast("삭제 실패", "bad");
+          }
+        }}, "삭제"));
       }
-    } catch(e){
-      toast("실패: " + e.message);
+      head.appendChild(actions);
+
+      const body = el("div", { class: "comment__body md", html: renderMd(c.bodyMd) });
+      list.appendChild(el("div", { class: "comment" }, head, body));
     }
-  });
-}
-
-/* ---------- Post actions ---------- */
-$postLikeBtn.addEventListener("click", async ()=>{
-  if (!requireLogin()) return;
-  if (!currentPost) return;
-  try{
-    const r = await api("/likes/toggle", { method:"POST", body:{ targetType:"post", targetId: currentPost.id } });
-    toast(r.liked ? "좋아요!" : "좋아요 취소");
-    await openPost(currentPost.id);
-    await loadFeed(true);
-  } catch(e){
-    toast("실패: " + e.message);
-  }
-});
-
-$postReportBtn.addEventListener("click", ()=>{
-  if (!requireLogin()) return;
-  if (!currentPost) return;
-
-  openModal("신고하기", `
-    <div class="muted">운영 규칙 위반/스팸/괴롭힘/불법 등 신고 사유를 선택하고 상세를 적어주세요.</div>
-    <div class="select">
-      <label class="select__label" for="rpReason">사유</label>
-      <select id="rpReason" class="select__box">
-        <option>스팸/광고</option>
-        <option>욕설/혐오</option>
-        <option>불법/위험</option>
-        <option>개인정보 노출</option>
-        <option>기타</option>
-      </select>
-    </div>
-    <textarea id="rpDetail" class="textarea" rows="5" placeholder="상세 내용"></textarea>
-  `, `
-    <button class="btn btn--ghost" data-close="1" type="button">취소</button>
-    <button class="btn btn--primary" id="rpSubmit" type="button">신고 제출</button>
-  `);
-
-  $("#rpSubmit").addEventListener("click", async ()=>{
-    try{
-      await api("/reports", { method:"POST", body:{
-        targetType:"post",
-        targetId: currentPost.id,
-        reason: $("#rpReason").value,
-        detail: $("#rpDetail").value.trim()
-      }});
-      closeModal();
-      toast("신고가 접수됐어요.");
-    } catch(e){
-      toast("신고 실패: " + e.message);
-    }
-  });
-});
-
-$postBookmarkBtn.addEventListener("click", ()=>{
-  if (!currentPost) return;
-  const on = toggleBookmark(currentPost);
-  $postBookmarkBtn.querySelector(".icon")?.style && ($postBookmarkBtn.querySelector(".icon").style.opacity = on ? "1":"0.55");
-  renderIcons();
-});
-
-$postPinBtn.addEventListener("click", async ()=>{
-  if (!requireLogin()) return;
-  if (!currentPost) return;
-  try{
-    const r = await api(`/posts/${currentPost.id}/pin`, { method:"POST" });
-    toast(r.pinned ? "고정됨" : "고정 해제됨");
-    await openPost(currentPost.id);
-    await loadFeed(true);
-  } catch(e){
-    toast("실패: " + e.message);
-  }
-});
-
-$postEditBtn.addEventListener("click", ()=> openWriteModal(true));
-
-$postDeleteBtn.addEventListener("click", ()=>{
-  if (!requireLogin()) return;
-  if (!currentPost) return;
-
-  openModal("삭제 확인", `
-    <div class="muted">이 글을 삭제하면 피드에서 제거됩니다. (관리자/모더레이터만)</div>
-  `, `
-    <button class="btn btn--ghost" data-close="1" type="button">취소</button>
-    <button class="btn btn--danger" id="doDelete" type="button">삭제</button>
-  `);
-
-  $("#doDelete").addEventListener("click", async ()=>{
-    try{
-      await api(`/posts/${currentPost.id}`, { method:"DELETE" });
-      closeModal();
-      toast("삭제 완료");
-      showFeed();
-      await loadFeed(true);
-    } catch(e){
-      toast("삭제 실패: " + e.message);
-    }
-  });
-});
-
-/* ---------- Comment composer ---------- */
-$commentPreviewBtn.addEventListener("click", ()=>{
-  const on = $commentPreview.classList.toggle("is-hidden") === false;
-  if (on) $commentPreview.innerHTML = md($commentInput.value);
-});
-$commentInput.addEventListener("keydown", (e)=>{
-  if (e.key === "Enter" && !e.shiftKey){
-    e.preventDefault();
-    $commentSendBtn.click();
-  }
-});
-$commentSendBtn.addEventListener("click", async ()=>{
-  if (!requireLogin()) return;
-  if (!currentPost) return;
-  const bodyMd = $commentInput.value.trim();
-  const anonymous = $commentAnon.checked;
-  if (!bodyMd) return toast("댓글 내용을 입력해줘");
-  try{
-    await api(`/posts/${currentPost.id}/comments`, { method:"POST", body:{ bodyMd, anonymous } });
-    $commentInput.value = "";
-    $commentPreview.classList.add("is-hidden");
-    toast("댓글 등록!");
-    await openPost(currentPost.id);
-    await loadFeed(true);
-  } catch(e){
-    toast("댓글 실패: " + e.message);
-  }
-});
-
-/* ---------- Bookmarks view ---------- */
-function openBookmarks(){
-  const items = Object.values(state.bookmarks).sort((a,b)=> (b.createdAt||0)-(a.createdAt||0));
-  openModal("북마크", `
-    <div class="muted">기기(localStorage)에 저장됩니다.</div>
-    <div style="margin-top:10px; display:flex; flex-direction:column; gap:10px">
-      ${items.length ? items.map(p=>`
-        <div class="item" data-bmopen="${p.id}" tabindex="0">
-          <div class="item__top">
-            <span class="tag">${escapeHtml(catLabel(p.category))}</span>
-            ${p.pinned ? `<span class="pin"><span class="icon" data-lucide="pin"></span>고정</span>`:""}
-            <span class="pill">${escapeHtml(p.authorName||"")}</span>
-            <span class="pill">${escapeHtml(relTime(p.createdAt))}</span>
-            <div class="item__right">
-              <button class="btn btn--danger" data-bmremove="${p.id}" type="button">삭제</button>
-            </div>
-          </div>
-          <div class="item__title">${escapeHtml(p.title||"")}</div>
-        </div>
-      `).join("") : `<div class="card" style="padding:14px">북마크가 비어있어요.</div>`}
-    </div>
-  `, `
-    <button class="btn btn--ghost" data-close="1" type="button">닫기</button>
-  `);
-
-  $$("[data-bmopen]").forEach(el=>{
-    el.addEventListener("click", ()=>{
-      const id = el.getAttribute("data-bmopen");
-      closeModal();
-      openPost(id);
-    });
-  });
-  $$("[data-bmremove]").forEach(btn=>{
-    btn.addEventListener("click", (e)=>{
-      e.stopPropagation();
-      const id = btn.getAttribute("data-bmremove");
-      delete state.bookmarks[id];
-      saveBookmarks();
-      toast("삭제됨");
-      closeModal();
-      openBookmarks();
-    });
-  });
-
-  renderIcons();
-}
-
-/* ---------- Activity (me posts/comments) ---------- */
-async function openActivity(){
-  if (!requireLogin()) return;
-
-  openModal("내 활동", `
-    <div class="row" style="gap:10px; flex-wrap:wrap">
-      <button class="btn btn--ghost" id="tabMyPosts" type="button">내 글</button>
-      <button class="btn btn--ghost" id="tabMyComments" type="button">내 댓글</button>
-      <div class="spacer"></div>
-      <span class="muted">API: /me/posts, /me/comments</span>
-    </div>
-    <div id="actList" style="margin-top:12px; display:flex; flex-direction:column; gap:10px">
-      <div class="muted">불러오는 중…</div>
-    </div>
-  `, `<button class="btn btn--ghost" data-close="1" type="button">닫기</button>`);
-
-  const $actList = $("#actList");
-
-  async function loadMyPosts(){
-    $actList.innerHTML = `<div class="muted">내 글 불러오는 중…</div>`;
-    try{
-      const r = await api("/me/posts", { qsObj:{ sort:"latest", pageSize:100 }});
-      const posts = r.posts || [];
-      if (!posts.length) { $actList.innerHTML = `<div class="card" style="padding:14px">내 글이 아직 없어요.</div>`; return; }
-      $actList.innerHTML = posts.map(postCard).join("");
-      $$("[data-open]", $actList).forEach(el=> el.addEventListener("click", ()=>{ closeModal(); openPost(el.getAttribute("data-open")); }));
-      $$("[data-bm]", $actList).forEach(btn=>{
-        btn.addEventListener("click",(e)=>{
-          e.stopPropagation();
-          const id = btn.getAttribute("data-bm");
-          const p = posts.find(x=>x.id===id);
-          if(!p) return;
-          const on = toggleBookmark(p);
-          btn.querySelector(".icon").style.opacity = on ? "1":"0.55";
-          renderIcons();
-        });
-      });
-      renderIcons();
-    } catch(e){
-      $actList.innerHTML = `<div class="card" style="padding:14px">실패: ${escapeHtml(e.message)}</div>`;
-    }
-  }
-
-  async function loadMyComments(){
-    $actList.innerHTML = `<div class="muted">내 댓글 불러오는 중…</div>`;
-    try{
-      const r = await api("/me/comments", { qsObj:{ pageSize:100 }});
-      const cs = r.comments || [];
-      if (!cs.length) { $actList.innerHTML = `<div class="card" style="padding:14px">내 댓글이 아직 없어요.</div>`; return; }
-      $actList.innerHTML = cs.map(c=>`
-        <div class="item" data-open="${c.postId}" tabindex="0">
-          <div class="item__top">
-            <span class="tag">댓글</span>
-            ${c.post?.pinned ? `<span class="pin"><span class="icon" data-lucide="pin"></span>고정</span>`:""}
-            <span class="pill">${escapeHtml(catLabel(c.post?.category))}</span>
-            <span class="pill">${escapeHtml(relTime(c.createdAt))}</span>
-          </div>
-          <div class="item__title">${escapeHtml(c.post?.title || "글로 이동")}</div>
-          <div class="item__meta">${escapeHtml((c.bodyMd||"").slice(0,120))}${(c.bodyMd||"").length>120?"…":""}</div>
-        </div>
-      `).join("");
-      $$("[data-open]", $actList).forEach(el=> el.addEventListener("click", ()=>{ closeModal(); openPost(el.getAttribute("data-open")); }));
-      renderIcons();
-    } catch(e){
-      $actList.innerHTML = `<div class="card" style="padding:14px">실패: ${escapeHtml(e.message)}</div>`;
-    }
-  }
-
-  $("#tabMyPosts").addEventListener("click", loadMyPosts);
-  $("#tabMyComments").addEventListener("click", loadMyComments);
-
-  loadMyPosts();
-}
-
-/* ---------- Admin Reports ---------- */
-async function openAdminReports(){
-  if (!requireLogin()) return;
-  if (!isAdminRole(state.me?.role)) return toast("관리자/모더레이터만 가능");
-
-  openModal("신고함(관리자)", `
-    <div class="row" style="gap:10px; flex-wrap:wrap">
-      <button class="btn btn--ghost" id="rpOpen" type="button">미처리</button>
-      <button class="btn btn--ghost" id="rpClosed" type="button">처리됨</button>
-      <button class="btn btn--ghost" id="rpAll" type="button">전체</button>
-      <div class="spacer"></div>
-      <span class="muted">/admin/reports</span>
-    </div>
-    <div id="rpList" style="margin-top:12px; display:flex; flex-direction:column; gap:10px">
-      <div class="muted">불러오는 중…</div>
-    </div>
-  `, `<button class="btn btn--ghost" data-close="1" type="button">닫기</button>`);
-
-  const $rpList = $("#rpList");
-
-  async function load(status){
-    $rpList.innerHTML = `<div class="muted">불러오는 중…</div>`;
-    try{
-      const r = await api("/admin/reports", { qsObj:{ status, pageSize:200 }});
-      const rs = r.reports || [];
-      if (!rs.length) { $rpList.innerHTML = `<div class="card" style="padding:14px">신고가 없어요.</div>`; return; }
-
-      $rpList.innerHTML = rs.map(x=>`
-        <div class="comment">
-          <div class="comment__meta">
-            <span class="pill">${escapeHtml(x.status)}</span>
-            <span class="pill">${escapeHtml(x.target_type)}:${escapeHtml(x.target_id)}</span>
-            <span class="pill">신고자: ${escapeHtml(x.reporter_nick)}</span>
-            <span class="pill">${escapeHtml(relTime(x.created_at))}</span>
-            <div class="spacer"></div>
-            ${x.status==="open" ? `<button class="btn btn--primary" data-closeReport="${x.id}" type="button">처리</button>` : ``}
-            <button class="btn btn--ghost" data-openTarget="${x.target_type}:${x.target_id}" type="button">대상 열기</button>
-          </div>
-          <div style="margin-top:8px"><b>${escapeHtml(x.reason)}</b></div>
-          <div class="muted" style="margin-top:6px; white-space:pre-wrap">${escapeHtml(x.detail)}</div>
-        </div>
-      `).join("");
-
-      $$("[data-openTarget]", $rpList).forEach(btn=>{
-        btn.addEventListener("click", ()=>{
-          const v = btn.getAttribute("data-openTarget");
-          const [t,id] = v.split(":");
-          if (t==="post") { closeModal(); openPost(id); }
-          else toast("comment 대상 열기는 현재 버전에서 post로 이동만 지원");
-        });
-      });
-
-      $$("[data-closeReport]", $rpList).forEach(btn=>{
-        btn.addEventListener("click", async ()=>{
-          const id = btn.getAttribute("data-closeReport");
-          try{
-            await api(`/admin/reports/${id}/close`, { method:"POST" });
-            toast("처리됨");
-            load(status);
-          } catch(e){
-            toast("실패: " + e.message);
-          }
-        });
-      });
-
-    } catch(e){
-      $rpList.innerHTML = `<div class="card" style="padding:14px">실패: ${escapeHtml(e.message)}</div>`;
-    }
-  }
-
-  $("#rpOpen").addEventListener("click", ()=>load("open"));
-  $("#rpClosed").addEventListener("click", ()=>load("closed"));
-  $("#rpAll").addEventListener("click", ()=>load("all"));
-
-  load("open");
-}
-
-/* ---------- Realtime (WebSocket) ---------- */
-let ws = null;
-function connectRealtime(){
-  try{
-    if (ws) { ws.close(); ws = null; }
-    const u = new URL(API_BASE + "/realtime");
-    u.searchParams.set("channel","feed");
-    const wsu = u.toString().replace("https://","wss://").replace("http://","ws://");
-
-    ws = new WebSocket(wsu);
-
-    ws.onopen = ()=>{
-      state.ws.ok = true;
-      $rtLabel.textContent = "실시간: 연결됨";
-      $rtMeta.textContent = "—";
-      $rtDot.parentElement.classList.add("is-on");
-    };
-
-    ws.onmessage = (evt)=>{
-      state.ws.lastTs = Date.now();
-      try{
-        const msg = JSON.parse(evt.data);
-        if (msg?.payload?.kind) {
-          // lightweight: refresh feed if on feed view
-          if (!$feedView.classList.contains("is-hidden")) {
-            loadFeed(true);
-          }
-        }
-      } catch {}
-    };
-
-    ws.onclose = ()=>{
-      state.ws.ok = false;
-      $rtLabel.textContent = "실시간: 연결 끊김";
-      $rtMeta.textContent = "재연결 시도…";
-      $rtDot.parentElement.classList.remove("is-on");
-      setTimeout(connectRealtime, 1200 + Math.random()*900);
-    };
-    ws.onerror = ()=>{
-      try{ ws.close(); }catch{}
-    };
-
-    // ping
-    setInterval(()=>{ try{ if (ws && ws.readyState===1) ws.send("ping"); }catch{} }, 8000);
   } catch {
-    $rtLabel.textContent = "실시간: 실패";
-    $rtMeta.textContent = "—";
+    $("#commentMeta").textContent = "댓글 불러오기 실패";
+  } finally {
+    refreshIcons();
   }
 }
 
-/* ---------- Events ---------- */
-$themeBtn.addEventListener("click", ()=>{
-  const cur = document.documentElement.dataset.theme || "dark";
-  applyTheme(cur === "dark" ? "light" : "dark");
-});
-$bookmarksBtn.addEventListener("click", openBookmarks);
-$activityBtn.addEventListener("click", openActivity);
+/* ------------------------ Post actions ------------------------ */
+function openEditorModal({ mode, postId, initial }) {
+  const title = el("input", { class: "input", placeholder: "제목", value: initial?.title || "" });
+  const category = el("select", { class: "select__box" },
+    el("option", { value: "free" }, "자유"),
+    el("option", { value: "notice" }, "공지"),
+    el("option", { value: "qna" }, "Q&A"),
+    el("option", { value: "study" }, "스터디"),
+  );
+  category.value = initial?.category || "free";
 
-$searchBtn.addEventListener("click", ()=>{
-  state.q = $qInput.value.trim();
-  loadFeed(true);
-});
-$qInput.addEventListener("keydown", (e)=>{
-  if (e.key==="Enter") $searchBtn.click();
-});
+  const anon = el("input", { type: "checkbox" });
+  anon.checked = !!initial?.anonymous;
 
-$sortSel.addEventListener("change", ()=>{
-  state.sort = $sortSel.value;
-  loadFeed(true);
-});
+  const body = el("textarea", { class: "textarea", rows: "10" }, initial?.bodyMd || "");
+  body.value = initial?.bodyMd || "";
 
-$chips.forEach(btn=>{
-  btn.addEventListener("click", ()=>{
-    $chips.forEach(x=>x.classList.remove("is-active"));
-    btn.classList.add("is-active");
-    state.category = btn.dataset.cat;
-    loadFeed(true);
+  const preview = el("div", { class: "md", style: "display:none; margin-top:10px" });
+
+  const form = el("div", {},
+    el("div", { class: "row" },
+      el("div", { style: "flex:1" }, el("div", { class: "muted" }, "제목"), title),
+      el("div", { style: "width:200px" }, el("div", { class: "muted" }, "카테고리"), category),
+    ),
+    el("div", { class: "row" },
+      el("label", { class: "toggle" }, anon, el("span", {}, "익명")),
+      el("div", { class: "muted" }, "이미지: ![](링크) / 코드: ```lang"),
+    ),
+    el("div", {}, el("div", { class: "muted" }, "본문(Markdown)"), body),
+    preview
+  );
+
+  const btnPreview = el("button", { class: "btn btn--ghost", type: "button", onclick: () => {
+    preview.style.display = preview.style.display === "none" ? "block" : "none";
+    preview.innerHTML = renderMd(body.value);
+    refreshIcons();
+  }}, "미리보기");
+
+  const btnSave = el("button", { class: "btn btn--primary", type: "button", onclick: async () => {
+    if (!ensureLoginOrWarn()) return;
+    const payload = {
+      title: title.value.trim(),
+      category: category.value,
+      bodyMd: body.value,
+      anonymous: anon.checked,
+    };
+    try {
+      if (mode === "new") {
+        const res = await api("/posts", { method: "POST", body: payload, auth: true });
+        toast("작성 완료", "ok");
+        closeModal();
+        await loadFeed(true);
+        await openPost(res.postId);
+      } else {
+        await api(`/posts/${postId}`, { method: "PATCH", body: payload, auth: true });
+        toast("수정 완료", "ok");
+        closeModal();
+        await openPost(postId);
+      }
+    } catch {
+      toast("저장 실패", "bad");
+    }
+  }}, mode === "new" ? "작성" : "저장");
+
+  openModal(mode === "new" ? "새 글 작성" : "글 수정", form, [btnPreview, btnSave]);
+}
+
+async function openEditCurrentPost() {
+  const pid = state.currentPostId;
+  const res = await api(`/posts/${pid}`, { auth: true });
+  const p = res.post;
+  openEditorModal({ mode: "edit", postId: pid, initial: { title: p.title, category: p.category, bodyMd: p.bodyMd, anonymous: p.anonymous } });
+}
+
+async function deleteCurrentPost() {
+  if (!confirm("정말 삭제할까요?")) return;
+  try {
+    await api(`/posts/${state.currentPostId}`, { method: "DELETE", auth: true });
+    toast("삭제 완료", "ok");
+    showView("feed");
+    await loadFeed(true);
+  } catch {
+    toast("삭제 실패", "bad");
+  }
+}
+
+async function togglePinCurrentPost() {
+  try {
+    const res = await api(`/admin/posts/${state.currentPostId}/pin`, { method: "POST", auth: true });
+    toast(res.pinned ? "공지 고정됨" : "공지 고정 해제됨", "ok");
+    await openPost(state.currentPostId);
+    await loadFeed(true);
+  } catch {
+    toast("핀 변경 실패(관리자 권한 필요)", "bad");
+  }
+}
+
+/* ------------------------ Like / Report ------------------------ */
+async function likeCurrentPost() {
+  if (!ensureLoginOrWarn()) return;
+  try {
+    // 토글Like는 post/comment 둘 다 가능
+    await api("/likes/toggle", { method: "POST", auth: true, body: { targetType: "post", targetId: state.currentPostId } });
+    toast("좋아요 반영됨", "ok");
+    await openPost(state.currentPostId);
+  } catch {
+    toast("좋아요 실패", "bad");
+  }
+}
+
+function openReportModal(targetType, targetId) {
+  if (!ensureLoginOrWarn()) return;
+
+  const reason = el("select", { class: "select__box" },
+    el("option", { value: "스팸/광고" }, "스팸/광고"),
+    el("option", { value: "욕설/비방" }, "욕설/비방"),
+    el("option", { value: "개인정보" }, "개인정보"),
+    el("option", { value: "불쾌한 콘텐츠" }, "불쾌한 콘텐츠"),
+    el("option", { value: "기타" }, "기타"),
+  );
+  const detail = el("textarea", { class: "textarea", rows: "5", placeholder: "상세 사유(선택)" });
+
+  const body = el("div", {},
+    el("div", { class: "muted" }, "신고는 관리자에게 전달되며, 허위 신고는 제재될 수 있습니다."),
+    el("div", { style: "height:10px" }),
+    el("div", {}, el("div", { class: "muted" }, "사유"), reason),
+    el("div", { style: "height:10px" }),
+    el("div", {}, el("div", { class: "muted" }, "상세"), detail),
+  );
+
+  openModal("신고하기", body, [
+    el("button", { class: "btn btn--ghost", type: "button", onclick: closeModal }, "취소"),
+    el("button", { class: "btn btn--danger", type: "button", onclick: async () => {
+      try {
+        await api("/reports", { method: "POST", auth: true, body: { targetType, targetId, reason: reason.value, detail: detail.value } });
+        toast("신고가 접수되었습니다.", "ok");
+        closeModal();
+      } catch {
+        toast("신고 실패", "bad");
+      }
+    }}, "신고 접수"),
+  ]);
+}
+
+/* ------------------------ Comments composer ------------------------ */
+function initCommentComposer() {
+  const input = $("#commentInput");
+  const previewBtn = $("#commentPreviewBtn");
+  const preview = $("#commentPreview");
+
+  previewBtn.addEventListener("click", () => {
+    const on = preview.classList.toggle("is-hidden");
+    if (!on) preview.innerHTML = renderMd(input.value);
   });
-});
 
-$refreshBtn.addEventListener("click", ()=> loadFeed(true));
-$loadMoreBtn.addEventListener("click", ()=> loadFeed(false));
-$newPostBtn.addEventListener("click", ()=> openWriteModal(false));
-$fabBtn.addEventListener("click", ()=> openWriteModal(false));
-$backBtn.addEventListener("click", showFeed);
-$homeBtn.addEventListener("click", ()=>{ showFeed(); loadFeed(true); });
+  input.addEventListener("keydown", async (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      await sendComment();
+    }
+  });
 
-/* ---------- Init ---------- */
-(async function init(){
+  $("#commentSendBtn").addEventListener("click", sendComment);
+}
+
+async function sendComment() {
+  if (!ensureLoginOrWarn()) return;
+  const pid = state.currentPostId;
+  const bodyMd = $("#commentInput").value.trim();
+  if (!bodyMd) { toast("댓글 내용을 입력하세요.", "bad"); return; }
+
+  try {
+    await api(`/posts/${pid}/comments`, {
+      method: "POST",
+      auth: true,
+      body: { bodyMd, anonymous: $("#commentAnon").checked }
+    });
+    $("#commentInput").value = "";
+    $("#commentPreview").classList.add("is-hidden");
+    toast("댓글 등록됨", "ok");
+    await loadComments(pid);
+    await openPost(pid);
+  } catch {
+    toast("댓글 등록 실패", "bad");
+  }
+}
+
+/* ------------------------ Bookmarks ------------------------ */
+function syncBookmarkBtn(postId, title, createdAt) {
+  const btn = $("#postBookmarkBtn");
+  const bm = loadBookmarks();
+  const on = !!bm[postId];
+  btn.innerHTML = on
+    ? `<i data-lucide="bookmark-check" class="i"></i> 북마크됨`
+    : `<i data-lucide="bookmark" class="i"></i> 북마크`;
+  btn.onclick = () => {
+    const cur = loadBookmarks();
+    if (cur[postId]) {
+      delete cur[postId];
+      toast("북마크 제거", "ok");
+    } else {
+      cur[postId] = { id: postId, title, createdAt };
+      toast("북마크 저장", "ok");
+    }
+    saveBookmarks(cur);
+    syncBookmarkBtn(postId, title, createdAt);
+    refreshIcons();
+  };
+  refreshIcons();
+}
+
+function openBookmarkList() {
+  const bm = loadBookmarks();
+  const items = Object.values(bm).sort((a,b)=> (b.createdAt||0)-(a.createdAt||0));
+  const wrap = el("div", {});
+  if (items.length === 0) {
+    wrap.appendChild(el("div", { class: "muted" }, "북마크가 비어있어요."));
+  } else {
+    for (const it of items) {
+      wrap.appendChild(el("div", { class: "item", onclick: () => { closeModal(); openPost(it.id); } },
+        el("div", { class: "item__top" },
+          el("div", { class: "item__title" }, it.title || it.id),
+          el("div", { class: "item__badges" }, el("span", { class: "badge" }, formatTime(it.createdAt || 0)))
+        )
+      ));
+    }
+  }
+  openModal("북마크", wrap, [
+    el("button", { class: "btn btn--danger", type: "button", onclick: () => {
+      if (!confirm("북마크를 전부 지울까요?")) return;
+      saveBookmarks({});
+      closeModal();
+      toast("북마크 초기화", "ok");
+    }}, "전체 삭제"),
+  ]);
+}
+
+/* ------------------------ My Activity ------------------------ */
+async function openMyActivity(inline = false) {
+  if (!ensureLoginOrWarn()) return;
+
+  const tab = el("div", { class: "chips" },
+    el("button", { class: "chip is-active", type: "button" }, "내 글"),
+    el("button", { class: "chip", type: "button" }, "내 댓글")
+  );
+  const content = el("div", { style: "margin-top:10px" }, el("div", { class: "muted" }, "불러오는 중…"));
+
+  const body = el("div", {}, tab, content);
+
+  async function load(kind) {
+    content.innerHTML = "";
+    content.appendChild(el("div", { class: "muted" }, "불러오는 중…"));
+    try {
+      if (kind === "posts") {
+        const res = await api(`/me/posts?limit=100`, { auth: true });
+        content.innerHTML = "";
+        const posts = res.posts || [];
+        if (!posts.length) content.appendChild(el("div", { class: "muted" }, "작성한 글이 없어요."));
+        for (const p of posts) {
+          content.appendChild(el("div", { class: "item", onclick: () => { if (!inline) closeModal(); openPost(p.id); } },
+            el("div", { class: "item__top" },
+              el("span", { class: "tag" }, catLabel(p.category)),
+              el("div", { class: "item__title" }, p.title),
+              el("div", { class: "item__badges" }, p.pinned ? el("span", { class: "badge badge--pin" }, "PIN") : null)
+            ),
+            el("div", { class: "item__meta" }, formatTime(p.createdAt))
+          ));
+        }
+      } else {
+        const res = await api(`/me/comments?limit=100`, { auth: true });
+        content.innerHTML = "";
+        const cs = res.comments || [];
+        if (!cs.length) content.appendChild(el("div", { class: "muted" }, "작성한 댓글이 없어요."));
+        for (const c of cs) {
+          content.appendChild(el("div", { class: "item", onclick: () => { if (!inline) closeModal(); openPost(c.postId); } },
+            el("div", { class: "item__top" },
+              el("span", { class: "tag" }, "댓글"),
+              el("div", { class: "item__title" }, c.postTitle || "(게시물)"),
+              el("div", { class: "item__badges" }, el("span", { class: "badge" }, formatTime(c.createdAt)))
+            ),
+            el("div", { class: "item__meta" }, el("span", { class: "muted" }, "내용(요약): "), el("span", {}, (c.bodyMd||"").slice(0,80)))
+          ));
+        }
+      }
+    } catch {
+      content.innerHTML = "";
+      content.appendChild(el("div", { class: "muted" }, "불러오기 실패"));
+    }
+    refreshIcons();
+  }
+
+  const [btnPosts, btnComments] = tab.querySelectorAll(".chip");
+  btnPosts.onclick = () => {
+    btnPosts.classList.add("is-active"); btnComments.classList.remove("is-active");
+    load("posts");
+  };
+  btnComments.onclick = () => {
+    btnComments.classList.add("is-active"); btnPosts.classList.remove("is-active");
+    load("comments");
+  };
+
+  await load("posts");
+
+  if (inline) {
+    // "내 활동" 탭으로 눌렀을 때: 모달 대신 feed 영역에 표시하고 싶으면 확장 가능
+    openModal("내 활동", body, []);
+  } else {
+    openModal("내 활동", body, []);
+  }
+}
+
+/* ------------------------ Admin Reports UI ------------------------ */
+async function openAdmin() {
+  showView("admin");
+  state.admin.reportCursor = "";
+  $("#reportList").innerHTML = "";
+  $("#reportMoreMeta").textContent = "";
+  await loadReports(true);
+}
+
+async function loadReports(reset = false) {
+  try {
+    if (reset) {
+      state.admin.reportCursor = "";
+      $("#reportList").innerHTML = "";
+      $("#reportMoreMeta").textContent = "불러오는 중…";
+    }
+    const qs = new URLSearchParams();
+    qs.set("status", state.admin.reportStatus);
+    qs.set("limit", "30");
+    if (state.admin.reportCursor) qs.set("cursor", state.admin.reportCursor);
+
+    const res = await api(`/admin/reports?${qs.toString()}`, { auth: true });
+    const list = $("#reportList");
+    const items = res.reports || [];
+
+    for (const r of items) {
+      const item = el("div", { class: "item" },
+        el("div", { class: "item__top" },
+          el("span", { class: "tag" }, `신고:${r.targetType}`),
+          el("div", { class: "item__title" }, r.postTitle || r.targetId),
+          el("div", { class: "item__badges" },
+            el("span", { class: "badge" }, r.status),
+            el("span", { class: "badge" }, r.reason)
+          )
+        ),
+        el("div", { class: "item__meta" },
+          el("span", {}, `신고자: ${r.reporter}`),
+          el("span", {}, "•"),
+          el("span", {}, formatTime(r.createdAt))
+        ),
+        el("div", { class: "row" },
+          el("div", { class: "muted", style: "flex:1" }, r.detail || ""),
+          el("button", { class: "btn btn--ghost", type: "button", onclick: async () => {
+            // 해당 글로 이동
+            if (r.targetType === "post") openPost(r.targetId);
+            else toast("댓글 신고 상세 이동은 (postId 필요) 확장 가능", "bad");
+          }}, "열기"),
+          el("button", { class: "btn btn--primary", type: "button", onclick: async () => {
+            try {
+              await api(`/admin/reports/${r.id}/resolve`, { method: "POST", auth: true });
+              toast("처리완료", "ok");
+              await loadReports(true);
+            } catch { toast("처리 실패", "bad"); }
+          }}, "완료"),
+        )
+      );
+      list.appendChild(item);
+    }
+
+    state.admin.reportCursor = res.nextCursor || "";
+    $("#reportMoreBtn").style.display = state.admin.reportCursor ? "inline-flex" : "none";
+    $("#reportMoreMeta").textContent = state.admin.reportCursor ? "더 불러올 수 있어요" : "끝!";
+    refreshIcons();
+  } catch {
+    toast("신고함 불러오기 실패(권한/토큰 확인)", "bad");
+    $("#reportMoreMeta").textContent = "불러오기 실패";
+  }
+}
+
+/* ------------------------ Wiring ------------------------ */
+function bindEvents() {
+  $("#themeBtn").addEventListener("click", () => {
+    const cur = localStorage.getItem(LS.theme) || "";
+    const next = cur === "light" ? "" : "light";
+    localStorage.setItem(LS.theme, next);
+    applyTheme(next);
+  });
+
+  $("#homeBtn").addEventListener("click", async () => {
+    showView("feed");
+    await loadFeed(true);
+  });
+
+  $("#adminBtn").addEventListener("click", openAdmin);
+  $("#reportStatusSel").addEventListener("change", async (e) => {
+    state.admin.reportStatus = e.target.value;
+    await loadReports(true);
+  });
+  $("#reportMoreBtn").addEventListener("click", () => loadReports(false));
+
+  $$(".chip").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      state.cat = btn.dataset.cat;
+      setActiveCat(state.cat);
+      showView("feed");
+      await loadFeed(true);
+    });
+  });
+
+  $("#sortSel").addEventListener("change", async (e) => {
+    state.sort = e.target.value;
+    await loadFeed(true);
+  });
+
+  $("#searchBtn").addEventListener("click", async () => {
+    state.q = $("#qInput").value.trim();
+    await loadFeed(true);
+  });
+
+  $("#qInput").addEventListener("keydown", async (e) => {
+    if (e.key === "Enter") {
+      state.q = $("#qInput").value.trim();
+      await loadFeed(true);
+    }
+  });
+
+  $("#refreshBtn").addEventListener("click", () => loadFeed(true));
+  $("#loadMoreBtn").addEventListener("click", () => loadFeed(false));
+
+  $("#newPostBtn").addEventListener("click", () => {
+    if (!ensureLoginOrWarn()) return;
+    openEditorModal({ mode: "new", initial: { category: state.cat === "all" ? "free" : state.cat } });
+  });
+  $("#fabBtn").addEventListener("click", () => {
+    if (!ensureLoginOrWarn()) return;
+    openEditorModal({ mode: "new", initial: { category: state.cat === "all" ? "free" : state.cat } });
+  });
+
+  $("#bookmarkBtn").addEventListener("click", openBookmarkList);
+
+  $("#backBtn").addEventListener("click", async () => {
+    showView("feed");
+    await loadFeed(false);
+  });
+
+  $("#postEditBtn").addEventListener("click", openEditCurrentPost);
+  $("#postDeleteBtn").addEventListener("click", deleteCurrentPost);
+  $("#postPinBtn").addEventListener("click", togglePinCurrentPost);
+
+  $("#postLikeBtn").addEventListener("click", likeCurrentPost);
+  $("#postReportBtn").addEventListener("click", () => openReportModal("post", state.currentPostId));
+
+  initCommentComposer();
+}
+
+/* ------------------------ Init ------------------------ */
+(async function init() {
+  boot();
   initTheme();
-  renderIcons();
-  await boot();
+  bindEvents();
 
-  // restore me if exists
-  try { state.me = JSON.parse(localStorage.getItem(LS.me) || "null"); } catch { state.me = null; }
-  renderUserBox();
+  // icons first
+  refreshIcons();
 
   await refreshMe();
-
-  // init sort selector
-  $sortSel.value = state.sort;
-
-  // realtime
-  connectRealtime();
-
-  // first load
   await loadFeed(true);
 
-  banner("베타 테스트 오픈! 불편/버그는 신고 또는 공지 댓글로 알려줘요.");
+  connectRealtime();
+
+  // prevent UI shift: keep rt width stable already in CSS
 })();
