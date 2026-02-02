@@ -485,3 +485,129 @@ code,pre{font-family:var(--mono)}
   50%{ transform: translateY(-8px) scale(1.12); opacity:.9 }
 }
 .boot__hint{font-size: 12px; color: var(--muted); text-align:center}
+
+/* =========================
+   Auth Modal / Dark mode fix
+   ========================= */
+
+:root{
+  --modal-bg-light: rgba(255,255,255,.82);
+  --modal-bg-dark: rgba(18,18,24,.88); /* 핵심: 다크에서 더 불투명 */
+  --modal-border-light: rgba(0,0,0,.10);
+  --modal-border-dark: rgba(255,255,255,.14);
+  --field-bg-light: rgba(255,255,255,.88);
+  --field-bg-dark: rgba(255,255,255,.08); /* 인풋 배경 */
+  --field-border-light: rgba(0,0,0,.12);
+  --field-border-dark: rgba(255,255,255,.14);
+}
+
+/* 모달 뒤 오버레이(배경)도 다크에서 조금 더 진하게 */
+.modalRoot {
+  background: rgba(0,0,0,.40);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+html[data-theme="dark"] .modalRoot,
+:root[data-theme="dark"] .modalRoot,
+body.dark .modalRoot {
+  background: rgba(0,0,0,.62);
+}
+
+/* 모달 카드/섹션(로그인/회원가입 박스) - 클래스명이 다를 수 있어도 보통 .modal, .card 같은 걸 씀 */
+.modal,
+.modalCard,
+.authCard,
+.modalRoot .card {
+  background: var(--modal-bg-light);
+  border: 1px solid var(--modal-border-light);
+  box-shadow: 0 18px 60px rgba(0,0,0,.22);
+}
+
+html[data-theme="dark"] .modal,
+html[data-theme="dark"] .modalCard,
+html[data-theme="dark"] .authCard,
+html[data-theme="dark"] .modalRoot .card,
+:root[data-theme="dark"] .modal,
+:root[data-theme="dark"] .modalCard,
+:root[data-theme="dark"] .authCard,
+:root[data-theme="dark"] .modalRoot .card,
+body.dark .modal,
+body.dark .modalCard,
+body.dark .authCard,
+body.dark .modalRoot .card {
+  background: var(--modal-bg-dark);
+  border: 1px solid var(--modal-border-dark);
+  box-shadow: 0 18px 70px rgba(0,0,0,.55);
+}
+
+/* 모달 내부 텍스트 대비 올리기 */
+html[data-theme="dark"] .modalRoot .card,
+:root[data-theme="dark"] .modalRoot .card,
+body.dark .modalRoot .card {
+  color: rgba(255,255,255,.92);
+}
+
+/* 인풋/textarea/셀렉트가 투명해서 안 보이는 문제 해결 */
+.modalRoot input.input,
+.modalRoot textarea.textarea,
+.modalRoot select.select__box,
+.modalRoot .input,
+.modalRoot .textarea,
+.modalRoot .select__box {
+  background: var(--field-bg-light);
+  border: 1px solid var(--field-border-light);
+}
+
+html[data-theme="dark"] .modalRoot input.input,
+html[data-theme="dark"] .modalRoot textarea.textarea,
+html[data-theme="dark"] .modalRoot select.select__box,
+html[data-theme="dark"] .modalRoot .input,
+html[data-theme="dark"] .modalRoot .textarea,
+html[data-theme="dark"] .modalRoot .select__box,
+:root[data-theme="dark"] .modalRoot input.input,
+:root[data-theme="dark"] .modalRoot textarea.textarea,
+:root[data-theme="dark"] .modalRoot select.select__box,
+:root[data-theme="dark"] .modalRoot .input,
+:root[data-theme="dark"] .modalRoot .textarea,
+:root[data-theme="dark"] .modalRoot .select__box,
+body.dark .modalRoot input.input,
+body.dark .modalRoot textarea.textarea,
+body.dark .modalRoot select.select__box,
+body.dark .modalRoot .input,
+body.dark .modalRoot .textarea,
+body.dark .modalRoot .select__box {
+  background: var(--field-bg-dark);
+  border: 1px solid var(--field-border-dark);
+  color: rgba(255,255,255,.92);
+}
+
+/* placeholder 대비 */
+html[data-theme="dark"] .modalRoot input::placeholder,
+html[data-theme="dark"] .modalRoot textarea::placeholder,
+:root[data-theme="dark"] .modalRoot input::placeholder,
+:root[data-theme="dark"] .modalRoot textarea::placeholder,
+body.dark .modalRoot input::placeholder,
+body.dark .modalRoot textarea::placeholder {
+  color: rgba(255,255,255,.55);
+}
+
+/* 포커스 때 테두리/글로우로 가독성 */
+.modalRoot input:focus,
+.modalRoot textarea:focus,
+.modalRoot select:focus {
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(120,120,255,.18);
+  border-color: rgba(140,140,255,.55);
+}
+html[data-theme="dark"] .modalRoot input:focus,
+html[data-theme="dark"] .modalRoot textarea:focus,
+html[data-theme="dark"] .modalRoot select:focus,
+:root[data-theme="dark"] .modalRoot input:focus,
+:root[data-theme="dark"] .modalRoot textarea:focus,
+:root[data-theme="dark"] .modalRoot select:focus,
+body.dark .modalRoot input:focus,
+body.dark .modalRoot textarea:focus,
+body.dark .modalRoot select:focus {
+  box-shadow: 0 0 0 4px rgba(120,120,255,.22);
+  border-color: rgba(180,180,255,.55);
+}
